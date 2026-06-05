@@ -62,7 +62,7 @@ class GamepadMidiController:
         # デモモード状態
         self.demo_mode = False
         self.demo_start_time = None
-        self.demo_last_stick_send = 0.0
+        self.demo_last_stick_send = -self.DEMO_STICK_INTERVAL  # デモ開始時に即送信（初回間引き回避）
         self.demo_prev_button_idx = -1
         self.demo_prev_state_value = -1
 
