@@ -342,6 +342,9 @@ class GamepadMidiController:
         """入力処理とMIDI送信（通常モード）"""
         pygame.event.pump()
         self._process_sticks()
+        current = self._read_buttons()
+        self._process_buttons(current)
+        self.prev_buttons = current
 
     def _process_sticks(self):
         """左右スティックの変化を14bit CCで送信"""
@@ -372,6 +375,21 @@ class GamepadMidiController:
 
             print(f"右スティック X:{right_stick[0]:6.3f}→{x_value:5d} Y:{right_stick[1]:6.3f}→{y_value:5d}")
             self.prev_right_stick = right_stick
+
+    def _read_buttons(self):
+        """現在のボタン状態を BUTTON_COUNT 個ぶん取得（未接続/不足は False）"""
+        if not self.joystick:
+            return [False] * self.BUTTON_COUNT
+        n = self.joystick.get_numbuttons()
+        return [bool(self.joystick.get_button(i)) if i < n else False
+                for i in range(self.BUTTON_COUNT)]
+
+    def _process_buttons(self, current):
+        """変化したボタンだけ CC#20-29 を送信（押下127 / 離上0）"""
+        for i in range(self.BUTTON_COUNT):
+            if current[i] != self.prev_buttons[i]:
+                self.send_cc(self.CC_BUTTON_BASE + i, 127 if current[i] else 0)
+                print(f"ボタン{i}: {'ON' if current[i] else 'OFF'}")
 
     def run(self):
         """メインループ"""
