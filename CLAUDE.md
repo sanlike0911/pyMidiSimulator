@@ -95,10 +95,10 @@ python setup.py
 ## User Interface Features
 
 The application provides interactive device selection at startup:
+- **Mode Selection**: At startup choose Normal mode (gamepad) or Demo mode. Demo mode needs no gamepad and continuously sends sticks (circular motion), buttons (sequential), and state (0↔16 sweep) for receiver-side testing.
 - **MIDI Port Selection**: Lists available MIDI ports and allows user selection
 - **Gamepad Selection**: Automatic selection for single gamepad, menu for multiple
 - **Error Handling**: Graceful handling of device connection failures
-- **Mode Selection**: At startup choose Normal mode (gamepad) or Demo mode. Demo mode needs no gamepad and continuously sends sticks (circular motion), buttons (sequential), and state (0↔16 sweep) for receiver-side testing.
 
 ## MIDI Device Setup
 
