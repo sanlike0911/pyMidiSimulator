@@ -65,6 +65,7 @@ class GamepadMidiController:
         self.demo_last_stick_send = -self.DEMO_STICK_INTERVAL  # デモ開始時に即送信（初回間引き回避）
         self.demo_prev_button_idx = -1
         self.demo_prev_state_value = -1
+        self.demo_state_value = 0
 
         print("MIDI Simulator - 14-bit CC Gamepad Controller")
         print("=" * 50)
@@ -485,7 +486,7 @@ class GamepadMidiController:
         if value == self.demo_prev_state_value:
             return
         self.demo_prev_state_value = value
-        self.state_value = value
+        self.demo_state_value = value
         cc_value = round(value / self.STATE_MAX * 127)
         self.send_cc(self.CC_STATE, cc_value)
         print(f"デモ 状態: {value}/{self.STATE_MAX} (CC#30={cc_value})")
@@ -542,7 +543,8 @@ class GamepadMidiController:
         if self.midi_out:
             self.midi_out.close_port()
 
-        pygame.quit()
+        if pygame.get_init():
+            pygame.quit()
         print("リソースを解放しました")
 
 def main():
