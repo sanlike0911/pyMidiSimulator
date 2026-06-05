@@ -27,6 +27,18 @@ class GamepadMidiController:
         self.CC_RIGHT_Y_MSB = 19
         self.CC_RIGHT_Y_LSB = 51
 
+        # ボタン設定（CC#20-29）
+        self.CC_BUTTON_BASE = 20    # ボタン i → CC#(20+i)
+        self.BUTTON_COUNT = 10
+
+        # 状態入力設定（CC#30）
+        self.CC_STATE = 30
+        self.STATE_MAX = 16         # 0..16 の17段階
+
+        # ショルダー（状態増減）: XInput 一般値 LB=4 / RB=5。機種により異なるため必要なら変更
+        self.SHOULDER_DOWN_BTN = 4  # 押下で状態 -1
+        self.SHOULDER_UP_BTN = 5    # 押下で状態 +1
+
         # 14ビット値の範囲
         self.NEUTRAL_POSITION = 8192
         self.MAX_14BIT_VALUE = 16383
@@ -35,6 +47,10 @@ class GamepadMidiController:
         # 前回の値を保存（変化時のみ送信）
         self.prev_left_stick = (0.0, 0.0)
         self.prev_right_stick = (0.0, 0.0)
+
+        # ボタン状態（変化検出用）と状態セレクタ値
+        self.prev_buttons = [False] * self.BUTTON_COUNT
+        self.state_value = 0
 
         print("MIDI Simulator - 14-bit CC Gamepad Controller")
         print("=" * 50)
