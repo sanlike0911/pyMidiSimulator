@@ -344,6 +344,7 @@ class GamepadMidiController:
         self._process_sticks()
         current = self._read_buttons()
         self._process_buttons(current)
+        self._process_state(current)
         self.prev_buttons = current
 
     def _process_sticks(self):
@@ -390,6 +391,23 @@ class GamepadMidiController:
             if current[i] != self.prev_buttons[i]:
                 self.send_cc(self.CC_BUTTON_BASE + i, 127 if current[i] else 0)
                 print(f"ボタン{i}: {'ON' if current[i] else 'OFF'}")
+
+    def _process_state(self, current):
+        """ショルダーの押下エッジで状態を増減し、変化時に CC#30 を送信"""
+        down_edge = current[self.SHOULDER_DOWN_BTN] and not self.prev_buttons[self.SHOULDER_DOWN_BTN]
+        up_edge = current[self.SHOULDER_UP_BTN] and not self.prev_buttons[self.SHOULDER_UP_BTN]
+
+        new_state = self.state_value
+        if up_edge:
+            new_state = min(self.STATE_MAX, new_state + 1)
+        if down_edge:
+            new_state = max(0, new_state - 1)
+
+        if new_state != self.state_value:
+            self.state_value = new_state
+            cc_value = round(new_state / self.STATE_MAX * 127)
+            self.send_cc(self.CC_STATE, cc_value)
+            print(f"状態: {new_state}/{self.STATE_MAX} (CC#30={cc_value})")
 
     def run(self):
         """メインループ"""
