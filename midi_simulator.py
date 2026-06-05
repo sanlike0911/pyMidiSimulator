@@ -441,8 +441,10 @@ class GamepadMidiController:
 
     def run(self):
         """メインループ"""
-        print("\n=== デバイス選択 ===")
+        print("\n=== モード選択 ===")
+        self.demo_mode = self.select_mode()
 
+        print("\n=== デバイス選択 ===")
         if not self.init_midi():
             print("MIDI出力デバイスの初期化に失敗しました")
             return False
@@ -451,19 +453,26 @@ class GamepadMidiController:
             print("MIDI入力デバイスの初期化に失敗しました")
             return False
 
-        if not self.init_gamepad():
-            print("ゲームパッドの初期化に失敗しました")
-            return False
+        if not self.demo_mode:
+            if not self.init_gamepad():
+                print("ゲームパッドの初期化に失敗しました")
+                return False
 
         print("\n動作開始 (Ctrl+Cで終了)")
-        print("スティックを動かしてMIDI CCを送信してください")
+        if self.demo_mode:
+            print("デモモード: ゲームパッド不要で自動的にMIDI CCを送信します")
+        else:
+            print("スティック/ボタン/ショルダーを操作してMIDI CCを送信してください")
         if self.midi_in:
             print("MIDI入力データも受信・表示します")
         print("-" * 50)
 
         try:
             while self.running:
-                self.process_input()
+                if self.demo_mode:
+                    self._process_demo()
+                else:
+                    self.process_input()
                 time.sleep(0.01)  # 100Hz更新
 
         except KeyboardInterrupt:
