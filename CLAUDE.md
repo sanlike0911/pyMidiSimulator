@@ -27,6 +27,8 @@ The application uses specific MIDI CC mappings for gamepad axes:
 - Right stick: X→CC#18/50 (MSB/LSB), Y→CC#19/51 (MSB/LSB)
 - 14-bit resolution: 0-16383 with neutral at 8192
 - Transmission order: LSB first, then MSB
+- Buttons: gamepad button i → CC#(20+i), i=0..9 (127=press / 0=release, threshold 64 on receiver)
+- State selector: shoulder buttons (LB/RB) increment/decrement 0..16 → CC#30 (scaled to 0-127)
 
 ## Development Environment
 
@@ -96,6 +98,7 @@ The application provides interactive device selection at startup:
 - **MIDI Port Selection**: Lists available MIDI ports and allows user selection
 - **Gamepad Selection**: Automatic selection for single gamepad, menu for multiple
 - **Error Handling**: Graceful handling of device connection failures
+- **Mode Selection**: At startup choose Normal mode (gamepad) or Demo mode. Demo mode needs no gamepad and continuously sends sticks (circular motion), buttons (sequential), and state (0↔16 sweep) for receiver-side testing.
 
 ## MIDI Device Setup
 
