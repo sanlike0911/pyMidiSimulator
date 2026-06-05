@@ -439,6 +439,57 @@ class GamepadMidiController:
             self.send_cc(self.CC_STATE, cc_value)
             print(f"状態: {new_state}/{self.STATE_MAX} (CC#30={cc_value})")
 
+    def _process_demo(self):
+        """デモモード: 経過時間から全CCを規則的パターンで生成・送信"""
+        if self.demo_start_time is None:
+            self.demo_start_time = time.time()
+        t = time.time() - self.demo_start_time
+        self._demo_sticks(t)
+        self._demo_buttons(t)
+        self._demo_state(t)
+
+    def _demo_sticks(self, t):
+        """スティックを円運動（左右で位相反転）。DEMO_STICK_INTERVAL ごとに送信"""
+        if t - self.demo_last_stick_send < self.DEMO_STICK_INTERVAL:
+            return
+        self.demo_last_stick_send = t
+
+        theta = 2 * math.pi * (t / self.DEMO_STICK_PERIOD)
+        lx = self.convert_to_midi_value(math.sin(theta))
+        ly = self.convert_to_midi_value(math.cos(theta))
+        rx = self.convert_to_midi_value(math.sin(theta + math.pi))
+        ry = self.convert_to_midi_value(math.cos(theta + math.pi))
+
+        self.send_14bit_cc(self.CC_LEFT_X_LSB, self.CC_LEFT_X_MSB, lx)
+        self.send_14bit_cc(self.CC_LEFT_Y_LSB, self.CC_LEFT_Y_MSB, ly)
+        self.send_14bit_cc(self.CC_RIGHT_X_LSB, self.CC_RIGHT_X_MSB, rx)
+        self.send_14bit_cc(self.CC_RIGHT_Y_LSB, self.CC_RIGHT_Y_MSB, ry)
+
+    def _demo_buttons(self, t):
+        """ボタンを順次点灯（常に1個ON）。変化時のみ送信"""
+        idx = int(t / self.DEMO_BUTTON_STEP) % self.BUTTON_COUNT
+        if idx == self.demo_prev_button_idx:
+            return
+        if self.demo_prev_button_idx >= 0:
+            self.send_cc(self.CC_BUTTON_BASE + self.demo_prev_button_idx, 0)
+        self.send_cc(self.CC_BUTTON_BASE + idx, 127)
+        print(f"デモ ボタン{idx} ON")
+        self.demo_prev_button_idx = idx
+
+    def _demo_state(self, t):
+        """状態を 0→16→0 で往復（三角波）。変化時のみ送信"""
+        step = int(t / self.DEMO_STATE_STEP)
+        period = 2 * self.STATE_MAX
+        phase = step % period
+        value = phase if phase <= self.STATE_MAX else period - phase
+        if value == self.demo_prev_state_value:
+            return
+        self.demo_prev_state_value = value
+        self.state_value = value
+        cc_value = round(value / self.STATE_MAX * 127)
+        self.send_cc(self.CC_STATE, cc_value)
+        print(f"デモ 状態: {value}/{self.STATE_MAX} (CC#30={cc_value})")
+
     def run(self):
         """メインループ"""
         print("\n=== モード選択 ===")
