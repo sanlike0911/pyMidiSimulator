@@ -339,9 +339,12 @@ class GamepadMidiController:
         return (left_x, left_y), (right_x, right_y)
 
     def process_input(self):
-        """入力処理とMIDI送信"""
+        """入力処理とMIDI送信（通常モード）"""
         pygame.event.pump()
+        self._process_sticks()
 
+    def _process_sticks(self):
+        """左右スティックの変化を14bit CCで送信"""
         left_stick, right_stick = self.get_stick_values()
 
         # 左スティック処理
