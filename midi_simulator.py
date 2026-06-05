@@ -7,6 +7,7 @@ MIDI Simulator - 14-bit CC Gamepad Controller
 import pygame
 import rtmidi
 import time
+import math
 import sys
 from typing import Tuple, Optional
 
@@ -27,6 +28,24 @@ class GamepadMidiController:
         self.CC_RIGHT_Y_MSB = 19
         self.CC_RIGHT_Y_LSB = 51
 
+        # ボタン設定（CC#20-29）
+        self.CC_BUTTON_BASE = 20    # ボタン i → CC#(20+i)
+        self.BUTTON_COUNT = 10
+
+        # 状態入力設定（CC#30）
+        self.CC_STATE = 30
+        self.STATE_MAX = 16         # 0..16 の17段階
+
+        # ショルダー（状態増減）: XInput 一般値 LB=4 / RB=5。機種により異なるため必要なら変更
+        self.SHOULDER_DOWN_BTN = 4  # 押下で状態 -1
+        self.SHOULDER_UP_BTN = 5    # 押下で状態 +1
+
+        # デモモード設定（自動出力パターン）
+        self.DEMO_STICK_PERIOD = 4.0    # スティック円運動の周期（秒）
+        self.DEMO_STICK_INTERVAL = 0.05 # スティック送信間隔（秒）= 約20Hz
+        self.DEMO_BUTTON_STEP = 0.4     # 点灯ボタンを次へ送る間隔（秒）
+        self.DEMO_STATE_STEP = 0.4      # 状態 ±1 の間隔（秒）
+
         # 14ビット値の範囲
         self.NEUTRAL_POSITION = 8192
         self.MAX_14BIT_VALUE = 16383
@@ -35,6 +54,18 @@ class GamepadMidiController:
         # 前回の値を保存（変化時のみ送信）
         self.prev_left_stick = (0.0, 0.0)
         self.prev_right_stick = (0.0, 0.0)
+
+        # ボタン状態（変化検出用）と状態セレクタ値
+        self.prev_buttons = [False] * self.BUTTON_COUNT
+        self.state_value = 0
+
+        # デモモード状態
+        self.demo_mode = False
+        self.demo_start_time = None
+        self.demo_last_stick_send = -self.DEMO_STICK_INTERVAL  # デモ開始時に即送信（初回間引き回避）
+        self.demo_prev_button_idx = -1
+        self.demo_prev_state_value = -1
+        self.demo_state_value = 0
 
         print("MIDI Simulator - 14-bit CC Gamepad Controller")
         print("=" * 50)
@@ -267,6 +298,22 @@ class GamepadMidiController:
             print(f"ゲームパッド初期化エラー: {e}")
             return False
 
+    def select_mode(self) -> bool:
+        """通常/デモのモード選択。True=デモモード"""
+        print("\n動作モード:")
+        print("  1: 通常モード（ゲームパッド）")
+        print("  2: デモモード（自動出力・ゲームパッド不要）")
+        while True:
+            try:
+                choice = input("モードを選択してください (1-2): ").strip()
+            except KeyboardInterrupt:
+                return False
+            if choice == "1":
+                return False
+            if choice == "2":
+                return True
+            print("1 または 2 を入力してください。")
+
     def convert_to_midi_value(self, analog_value: float) -> int:
         """アナログ値(-1.0～1.0)を14ビットMIDI値(0-16383)に変換"""
         # デッドゾーン適用
@@ -299,6 +346,14 @@ class GamepadMidiController:
         self.midi_out.send_message(cc_msb_msg)
         print(f"    MIDI: CC#{cc_msb}(MSB)={msb} [14bit={value}]")
 
+    def send_cc(self, cc: int, value: int):
+        """7ビットCCを1メッセージ送信（ボタン/状態で共用）"""
+        if not self.midi_out:
+            return
+
+        self.midi_out.send_message([0xB0, cc, value & 0x7F])
+        print(f"    MIDI: CC#{cc}={value & 0x7F}")
+
     def get_stick_values(self) -> Tuple[Tuple[float, float], Tuple[float, float]]:
         """スティック値を取得"""
         if not self.joystick:
@@ -315,9 +370,16 @@ class GamepadMidiController:
         return (left_x, left_y), (right_x, right_y)
 
     def process_input(self):
-        """入力処理とMIDI送信"""
+        """入力処理とMIDI送信（通常モード）"""
         pygame.event.pump()
+        self._process_sticks()
+        current = self._read_buttons()
+        self._process_buttons(current)
+        self._process_state(current)
+        self.prev_buttons = current
 
+    def _process_sticks(self):
+        """左右スティックの変化を14bit CCで送信"""
         left_stick, right_stick = self.get_stick_values()
 
         # 左スティック処理
@@ -346,10 +408,95 @@ class GamepadMidiController:
             print(f"右スティック X:{right_stick[0]:6.3f}→{x_value:5d} Y:{right_stick[1]:6.3f}→{y_value:5d}")
             self.prev_right_stick = right_stick
 
+    def _read_buttons(self):
+        """現在のボタン状態を BUTTON_COUNT 個ぶん取得（未接続/不足は False）"""
+        if not self.joystick:
+            return [False] * self.BUTTON_COUNT
+        n = self.joystick.get_numbuttons()
+        return [bool(self.joystick.get_button(i)) if i < n else False
+                for i in range(self.BUTTON_COUNT)]
+
+    def _process_buttons(self, current):
+        """変化したボタンだけ CC#20-29 を送信（押下127 / 離上0）"""
+        for i in range(self.BUTTON_COUNT):
+            if current[i] != self.prev_buttons[i]:
+                self.send_cc(self.CC_BUTTON_BASE + i, 127 if current[i] else 0)
+                print(f"ボタン{i}: {'ON' if current[i] else 'OFF'}")
+
+    def _process_state(self, current):
+        """ショルダーの押下エッジで状態を増減し、変化時に CC#30 を送信"""
+        down_edge = current[self.SHOULDER_DOWN_BTN] and not self.prev_buttons[self.SHOULDER_DOWN_BTN]
+        up_edge = current[self.SHOULDER_UP_BTN] and not self.prev_buttons[self.SHOULDER_UP_BTN]
+
+        new_state = self.state_value
+        if up_edge:
+            new_state = min(self.STATE_MAX, new_state + 1)
+        if down_edge:
+            new_state = max(0, new_state - 1)
+
+        if new_state != self.state_value:
+            self.state_value = new_state
+            cc_value = round(new_state / self.STATE_MAX * 127)
+            self.send_cc(self.CC_STATE, cc_value)
+            print(f"状態: {new_state}/{self.STATE_MAX} (CC#30={cc_value})")
+
+    def _process_demo(self):
+        """デモモード: 経過時間から全CCを規則的パターンで生成・送信"""
+        if self.demo_start_time is None:
+            self.demo_start_time = time.time()
+        t = time.time() - self.demo_start_time
+        self._demo_sticks(t)
+        self._demo_buttons(t)
+        self._demo_state(t)
+
+    def _demo_sticks(self, t):
+        """スティックを円運動（左右で位相反転）。DEMO_STICK_INTERVAL ごとに送信"""
+        if t - self.demo_last_stick_send < self.DEMO_STICK_INTERVAL:
+            return
+        self.demo_last_stick_send = t
+
+        theta = 2 * math.pi * (t / self.DEMO_STICK_PERIOD)
+        lx = self.convert_to_midi_value(math.sin(theta))
+        ly = self.convert_to_midi_value(math.cos(theta))
+        rx = self.convert_to_midi_value(math.sin(theta + math.pi))
+        ry = self.convert_to_midi_value(math.cos(theta + math.pi))
+
+        self.send_14bit_cc(self.CC_LEFT_X_LSB, self.CC_LEFT_X_MSB, lx)
+        self.send_14bit_cc(self.CC_LEFT_Y_LSB, self.CC_LEFT_Y_MSB, ly)
+        self.send_14bit_cc(self.CC_RIGHT_X_LSB, self.CC_RIGHT_X_MSB, rx)
+        self.send_14bit_cc(self.CC_RIGHT_Y_LSB, self.CC_RIGHT_Y_MSB, ry)
+
+    def _demo_buttons(self, t):
+        """ボタンを順次点灯（常に1個ON）。変化時のみ送信"""
+        idx = int(t / self.DEMO_BUTTON_STEP) % self.BUTTON_COUNT
+        if idx == self.demo_prev_button_idx:
+            return
+        if self.demo_prev_button_idx >= 0:
+            self.send_cc(self.CC_BUTTON_BASE + self.demo_prev_button_idx, 0)
+        self.send_cc(self.CC_BUTTON_BASE + idx, 127)
+        print(f"デモ ボタン{idx} ON")
+        self.demo_prev_button_idx = idx
+
+    def _demo_state(self, t):
+        """状態を 0→16→0 で往復（三角波）。変化時のみ送信"""
+        step = int(t / self.DEMO_STATE_STEP)
+        period = 2 * self.STATE_MAX
+        phase = step % period
+        value = phase if phase <= self.STATE_MAX else period - phase
+        if value == self.demo_prev_state_value:
+            return
+        self.demo_prev_state_value = value
+        self.demo_state_value = value
+        cc_value = round(value / self.STATE_MAX * 127)
+        self.send_cc(self.CC_STATE, cc_value)
+        print(f"デモ 状態: {value}/{self.STATE_MAX} (CC#30={cc_value})")
+
     def run(self):
         """メインループ"""
-        print("\n=== デバイス選択 ===")
+        print("\n=== モード選択 ===")
+        self.demo_mode = self.select_mode()
 
+        print("\n=== デバイス選択 ===")
         if not self.init_midi():
             print("MIDI出力デバイスの初期化に失敗しました")
             return False
@@ -358,19 +505,26 @@ class GamepadMidiController:
             print("MIDI入力デバイスの初期化に失敗しました")
             return False
 
-        if not self.init_gamepad():
-            print("ゲームパッドの初期化に失敗しました")
-            return False
+        if not self.demo_mode:
+            if not self.init_gamepad():
+                print("ゲームパッドの初期化に失敗しました")
+                return False
 
         print("\n動作開始 (Ctrl+Cで終了)")
-        print("スティックを動かしてMIDI CCを送信してください")
+        if self.demo_mode:
+            print("デモモード: ゲームパッド不要で自動的にMIDI CCを送信します")
+        else:
+            print("スティック/ボタン/ショルダーを操作してMIDI CCを送信してください")
         if self.midi_in:
             print("MIDI入力データも受信・表示します")
         print("-" * 50)
 
         try:
             while self.running:
-                self.process_input()
+                if self.demo_mode:
+                    self._process_demo()
+                else:
+                    self.process_input()
                 time.sleep(0.01)  # 100Hz更新
 
         except KeyboardInterrupt:
@@ -389,7 +543,8 @@ class GamepadMidiController:
         if self.midi_out:
             self.midi_out.close_port()
 
-        pygame.quit()
+        if pygame.get_init():
+            pygame.quit()
         print("リソースを解放しました")
 
 def main():
