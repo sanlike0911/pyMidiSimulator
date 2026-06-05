@@ -297,6 +297,22 @@ class GamepadMidiController:
             print(f"ゲームパッド初期化エラー: {e}")
             return False
 
+    def select_mode(self) -> bool:
+        """通常/デモのモード選択。True=デモモード"""
+        print("\n動作モード:")
+        print("  1: 通常モード（ゲームパッド）")
+        print("  2: デモモード（自動出力・ゲームパッド不要）")
+        while True:
+            try:
+                choice = input("モードを選択してください (1-2): ").strip()
+            except KeyboardInterrupt:
+                return False
+            if choice == "1":
+                return False
+            if choice == "2":
+                return True
+            print("1 または 2 を入力してください。")
+
     def convert_to_midi_value(self, analog_value: float) -> int:
         """アナログ値(-1.0～1.0)を14ビットMIDI値(0-16383)に変換"""
         # デッドゾーン適用
