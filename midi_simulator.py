@@ -315,6 +315,14 @@ class GamepadMidiController:
         self.midi_out.send_message(cc_msb_msg)
         print(f"    MIDI: CC#{cc_msb}(MSB)={msb} [14bit={value}]")
 
+    def send_cc(self, cc: int, value: int):
+        """7ビットCCを1メッセージ送信（ボタン/状態で共用）"""
+        if not self.midi_out:
+            return
+
+        self.midi_out.send_message([0xB0, cc, value & 0x7F])
+        print(f"    MIDI: CC#{cc}={value & 0x7F}")
+
     def get_stick_values(self) -> Tuple[Tuple[float, float], Tuple[float, float]]:
         """スティック値を取得"""
         if not self.joystick:
