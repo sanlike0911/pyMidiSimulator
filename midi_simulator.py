@@ -7,6 +7,7 @@ MIDI Simulator - 14-bit CC Gamepad Controller
 import pygame
 import rtmidi
 import time
+import math
 import sys
 from typing import Tuple, Optional
 
@@ -39,6 +40,12 @@ class GamepadMidiController:
         self.SHOULDER_DOWN_BTN = 4  # 押下で状態 -1
         self.SHOULDER_UP_BTN = 5    # 押下で状態 +1
 
+        # デモモード設定（自動出力パターン）
+        self.DEMO_STICK_PERIOD = 4.0    # スティック円運動の周期（秒）
+        self.DEMO_STICK_INTERVAL = 0.05 # スティック送信間隔（秒）= 約20Hz
+        self.DEMO_BUTTON_STEP = 0.4     # 点灯ボタンを次へ送る間隔（秒）
+        self.DEMO_STATE_STEP = 0.4      # 状態 ±1 の間隔（秒）
+
         # 14ビット値の範囲
         self.NEUTRAL_POSITION = 8192
         self.MAX_14BIT_VALUE = 16383
@@ -51,6 +58,13 @@ class GamepadMidiController:
         # ボタン状態（変化検出用）と状態セレクタ値
         self.prev_buttons = [False] * self.BUTTON_COUNT
         self.state_value = 0
+
+        # デモモード状態
+        self.demo_mode = False
+        self.demo_start_time = None
+        self.demo_last_stick_send = 0.0
+        self.demo_prev_button_idx = -1
+        self.demo_prev_state_value = -1
 
         print("MIDI Simulator - 14-bit CC Gamepad Controller")
         print("=" * 50)
