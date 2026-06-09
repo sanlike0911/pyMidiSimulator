@@ -281,6 +281,11 @@ class ControllerSimulator:
                 f"[受信コマンド] op={cmd.opcode} arg1={cmd.arg1} arg2={cmd.arg2}"
                 f" -> status={cmd.status} (seqEcho={cmd.seq})"
             )
+            # SetPreset(OK) 受信時は送信用 Preset も受信値へ同期する。
+            # これにより以降の ]/[ が受信した Preset を基準に増減し、送信用と受信値の二重管理を防ぐ。
+            if cmd.opcode == cc_map.CMD_SET_PRESET and cmd.status == cc_map.STATUS_OK:
+                self._preset = cmd.arg1
+                print(f"  → 送信用 Preset を {self._preset} に同期")
             self._prev_command = snapshot.last_command
         response = snapshot.last_event_response
         if response is not None and response is not self._prev_event_response:
