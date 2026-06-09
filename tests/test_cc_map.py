@@ -37,15 +37,6 @@ class TestNormalization:
     def test_bipolar_clamped_above(self):
         assert cc_map.norm14_bipolar(99999) == 1.0
 
-    def test_slider_zero(self):
-        assert cc_map.norm_slider(0) == 0.0
-
-    def test_slider_max(self):
-        assert cc_map.norm_slider(16383) == 1.0
-
-    def test_slider_mid(self):
-        assert cc_map.norm_slider(8192) == pytest.approx(0.5, abs=1e-3)
-
 
 class TestSeqCodec:
     @pytest.mark.parametrize("payload", [0, 1, 4, 63])

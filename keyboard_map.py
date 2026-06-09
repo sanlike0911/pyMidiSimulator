@@ -41,7 +41,7 @@ EVENT_KEYS: Dict[int, int] = {
     pygame.K_n: cc_map.EVT_SENSOR_TRIGGER,
 }
 
-TOGGLE_MODE_KEY = pygame.K_m
+AUTO_MODE_KEY = pygame.K_m
 HELP_KEY = pygame.K_SLASH
 QUIT_KEY = pygame.K_ESCAPE
 
@@ -50,13 +50,13 @@ def help_text() -> str:
     """キー操作の一覧を返す。"""
     return (
         "操作キー一覧（このウィンドウにフォーカスして操作）:\n"
-        "  スティック: 1/2=左X±  3/4=左Y±  5/6=右X±  7/8=右Y±（押下中ランプ）  0=全軸原点へ\n"
+        "  スティック: 1/2=左X±  3/4=左Y±  5/6=右X±  7/8=右Y±（押下中ランプ）  0=全軸を中心点へ移動\n"
         "  ボタン0-9 : Q W E F T Y U I O P（押下=ON / 離上=OFF）\n"
         "  Preset    : ]=+1  [=-1（CC40 0-127）\n"
         "  Error     : X=+1  Z=-1（CC41 0-127）\n"
         "  State     : V=+1  C=-1（CC42 0-127）\n"
         "  イベント  : G=HeartBeat  B=ButtonCombo  N=SensorTrigger（送信→応答待ち）\n"
-        "  モード切替: M（Stick ⇔ Slider・軸は原点リセット）\n"
+        "  自動入力  : M（自動デバッグ入力 ON/OFF・全要素を巡回送信）\n"
         "  その他    : /=ヘルプ再表示  ESC=終了\n"
         "  ※ コマンド(SetPreset 等)は Unity から受信し自動 ACK します"
     )

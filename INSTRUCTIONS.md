@@ -16,11 +16,12 @@
 ### モジュール構成
 
 - **`midi_simulator.py`** - `ControllerSimulator` クラス（オーケストレーション）。モード/ポート選択 UI、pygame ウィンドウ、メインループ、キー入力処理、HUD ログ、リソース解放。
-- **`cc_map.py`** - CC 番号定数・正規化（`norm14_bipolar` / `norm_slider`）・14bit 分割/再構成（`split_14bit` / `combine_14bit`）・seq コーデック（`pack_seq` / `payload_of` / `seq_of`）。MIDI/pygame 非依存の純粋関数。
+- **`cc_map.py`** - CC 番号定数・正規化（`norm14_bipolar`）・14bit 分割/再構成（`split_14bit` / `combine_14bit`）・seq コーデック（`pack_seq` / `payload_of` / `seq_of`）。MIDI/pygame 非依存の純粋関数。
+- **`auto_sequencer.py`** - 自動デバッグ入力モードの巡回シーケンス生成（`AutoSequencer` / `SendAction` / `ActionKind` / `Phase`）。`tick(event_pending)` がアクション列を返す MIDI/pygame 非依存の純粋ロジック。
 - **`messaging.py`** - コマンド/イベント I/F ステートマシン（受信コマンド→ACK、イベント送信→応答待ち、seq、タイムアウト）。`send_cc` の注入と `tick()` 駆動で動作。
 - **`midi_io.py`** - python-rtmidi のラッパー（ポート列挙・7bit/14bit CC 送信・受信ディスパッチ）。
 - **`keyboard_map.py`** - pygame キー → セマンティックアクションのマッピングとヘルプテキスト。
-- **`tests/`** - pytest（`cc_map` / `messaging` の純粋ロジックを網羅）。
+- **`tests/`** - pytest（`cc_map` / `messaging` / `auto_sequencer` の純粋ロジックを網羅）。
 - **`setup.py`** - 依存確認・インストール・起動を行う補助スクリプト。
 
 ### 送受信 CC（コントローラ役視点）
@@ -38,13 +39,11 @@
 
 > ⚠️ **CC 番号衝突:** 送信側の右スティック X/Y の LSB（CC#50/51）と、受信側の CMD_ARG1/CMD_OP（CC#50/51）が同番号。MIDI は IN/OUT が独立エンドポイントのため実機（物理 IN/OUT 分離）では無害だが、**単一仮想ポート/ループバックでは自分の送信が誤注入される**。IN/OUT は別ポートにすること（同一選択時は警告）。
 
-### スティック解釈（Stick / Slider）
+### スティック解釈（中心点固定）
 
-同じ CC ペア（16/48・17/49・18/50・19/51）を 2 モードで使用（同時併用不可・`M` キーで切替）：
-- **Stick**: 中央 8192 を原点に -1.0 … +1.0（双極）
-- **Slider**: 0 を原点に 0.0 … 1.0（単極）
+スティック軸（CC 16/48・17/49・18/50・19/51）は中心点 8192 を基準とする双極値（-1.0 … +1.0）として扱う。`0` キーで全軸を中心点 8192 へ移動できる。表示は `norm14_bipolar` による双極正規化。
 
-送信する 14bit バイト列はモード非依存。モードは原点（リセット先）・表示の正規化・初期値にのみ影響する。
+> 旧 Stick/Slider モード切替は撤廃済み（送信バイト列に影響せず、原点と表示正規化のみを変えるため）。経緯は [docs/superpowers/specs/2026-06-09-auto-debug-input-mode-design.md](docs/superpowers/specs/2026-06-09-auto-debug-input-mode-design.md) を参照。
 
 ### コマンド/イベント I/F
 
@@ -52,6 +51,10 @@
 - 受信コマンド: `CMD_ARG1/ARG2` をバッファ → `CMD_OP` 到着で commit、opcode 別処理（Ping/LED/Haptic=OK、SetPreset(4)=内部 Preset 更新、未知=UNKNOWN_OP）→ `CMDRSP_STATUS` で即 ACK（seqEcho 付）→ arg 消費。
 - イベント送信: `EVT_ARG`→`EVT_OP`（seq 0↔1 反転）→ `EVTRSP_STATUS` 受信で解決、seq 不一致/保留なしは破棄、30 Tick でタイムアウト・再送可。
 - 受信は常時処理（応答待ち中もコマンド受信→即 ACK）。クロスしてもデッドロックしない。
+
+### 自動デバッグ入力モード
+
+`M` キーで ON/OFF する。手動操作なしに送信系の全 CC を巡回送信し、受信側（Unity）の動作確認に使う。1 サイクルは「スティック各軸スイープ → ボタン 0–9 順次 ON/OFF → Preset/Error/State スイープ → イベント送信」で、終了後ループする。生成ロジックは `auto_sequencer.py` の `AutoSequencer`（純粋関数・テスト済み）。自動モード中は手動入力を無視し、`M`・`/`・`ESC` のみ有効。MIDI 入力が無い場合、イベントは応答タイムアウト（30 Tick）で次へ進む。
 
 ## 開発環境
 
@@ -110,20 +113,20 @@ python setup.py
 # 仮想環境内で
 pytest
 ```
-`cc_map` / `messaging` の純粋ロジックを対象にカバレッジを取得する（`pyproject.toml` で `testpaths=tests`）。MIDI / pygame / 対話 UI はユニットテスト対象外。
+`cc_map` / `messaging` / `auto_sequencer` の純粋ロジックを対象にカバレッジを取得する（`pyproject.toml` で `testpaths=tests`）。MIDI / pygame / 対話 UI はユニットテスト対象外。
 
 ## キーボード操作
 
 | キー | 動作 |
 | --- | --- |
 | `1`/`2` `3`/`4` `5`/`6` `7`/`8` | 左X / 左Y / 右X / 右Y の +/−（押下中ランプ） |
-| `0` | 全軸を原点へ（Stick=8192 / Slider=0） |
+| `0` | 全軸を中心点へ移動（8192） |
 | `Q W E F T Y U I O P` | ボタン 0–9（押下=ON / 離上=OFF） |
 | `]`/`[` | Preset +1/−1（CC40） |
 | `X`/`Z` | Error +1/−1（CC41） |
 | `V`/`C` | State +1/−1（CC42） |
 | `G` / `B` / `N` | イベント送信 HeartBeat / ButtonCombo / SensorTrigger |
-| `M` | Stick ⇔ Slider 切替（軸を原点リセット） |
+| `M` | 自動デバッグ入力モード ON/OFF（全要素を巡回送信） |
 | `/` | ヘルプ再表示 ／ `ESC` 終了 |
 
 > コマンド（SetPreset 等）は Unity から受信し自動で ACK する（キー操作不要）。
@@ -142,11 +145,13 @@ pytest
 - **`RESPONSE_TIMEOUT_TICKS`**: イベント応答タイムアウト（既定 30 Tick ≈ 0.5s）
 - **`MIDI_CHANNEL`**: 送受信チャンネル（既定 0 = ch1）
 - **14bit 範囲**: 0–16383（中央 8192）
+- **`AXIS_CENTER`**: 軸の中心点（既定 8192 = `cc_map.CENTER_14BIT`）
+- **`AUTO_STICK_STEP` / `AUTO_BUTTON_HOLD_TICKS` / `AUTO_CC_STEP`**: 自動デバッグ入力モードのスイープ速度・ボタン保持・スカラー刻み（既定 550 / 15 / 8）
 
 ## UI 機能
 
 起動時にインタラクティブな選択を提供します：
-- **モード選択**: Stick / Slider を選択（`M` キーで動的切替も可）
+- **自動デバッグ入力**: `M` キーで全 CC を巡回送信するデバッグモードを ON/OFF（起動時の選択 UI は無し）
 - **MIDI 出力ポート選択**: 必須
 - **MIDI 入力ポート選択**: 任意（スキップ時はコマンド受信／イベント応答が無効・送信のみ）。出力と同一ポート選択時は自己エコー誤注入の警告
 - **エラー処理**: ポート未検出・接続失敗を穏当にハンドリング

@@ -81,11 +81,6 @@ def norm14_bipolar(value: int) -> float:
     return max(-1.0, min(1.0, n))
 
 
-def norm_slider(value: int) -> float:
-    """14bit 生値を 0.0..1.0 に線形正規化する（表示用・クランプ）。"""
-    return max(0.0, min(1.0, value / MAX_14BIT))
-
-
 def pack_seq(payload: int, seq: int) -> int:
     """payload(0–63) と seq(0/1) を OP/STATUS 値に合成する。"""
     return (payload & PAYLOAD_MASK) + (SEQ_BIT if seq & 1 else 0)

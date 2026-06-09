@@ -1,5 +1,7 @@
 # デモモード（自動出力）の追加（pyMidiSimulator 送信側）設計書
 
+> **⚠ SUPERSEDED（2026-06-09）:** 本設計は旧アーキテクチャ（ゲームパッド → MIDI 送信ツール）向けで未実装のまま陳腐化した。同等の目的（手動入力なしの自動送信確認）は新仕様で [2026-06-09-auto-debug-input-mode-design.md](2026-06-09-auto-debug-input-mode-design.md) が引き継ぐ。本書は履歴として温存する。
+
 - **日付**: 2026-06-05
 - **ステータス**: 承認済み（実装計画 / writing-plans 待ち）
 - **対象**: `midi_simulator.py`（pyMidiSimulator＝ゲームパッド → MIDI CC 送信ツール）
