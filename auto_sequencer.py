@@ -91,9 +91,40 @@ class AutoSequencer:
             return self._tick_scalar()
         return self._tick_event(event_pending)
 
-    # 各フェーズのハンドラ（後続タスクで実装）
+    # 各フェーズのハンドラ
     def _tick_stick(self) -> List[SendAction]:
-        return []
+        axis = self._axis_index
+        axis_done = False
+        log = None
+        if self._axis_leg is _Leg.TO_MAX:
+            self._axis_value = min(self._axis_value + self._stick_step, cc_map.MAX_14BIT)
+            if self._axis_value >= cc_map.MAX_14BIT:
+                self._axis_leg = _Leg.TO_MIN
+                log = f"スティック {cc_map.AXIS_NAMES[axis]} 上端 {self._axis_value}"
+        elif self._axis_leg is _Leg.TO_MIN:
+            self._axis_value = max(self._axis_value - self._stick_step, 0)
+            if self._axis_value <= 0:
+                self._axis_leg = _Leg.TO_CENTER
+                log = f"スティック {cc_map.AXIS_NAMES[axis]} 下端 {self._axis_value}"
+        else:  # TO_CENTER
+            self._axis_value = min(self._axis_value + self._stick_step, cc_map.CENTER_14BIT)
+            if self._axis_value >= cc_map.CENTER_14BIT:
+                axis_done = True
+                log = f"スティック {cc_map.AXIS_NAMES[axis]} 中心 {self._axis_value}"
+        action = SendAction(ActionKind.AXIS, axis, self._axis_value, log)
+        if axis_done:
+            self._advance_axis()
+        return [action]
+
+    def _advance_axis(self) -> None:
+        """現在の軸を終え、次の軸へ。4 軸完了で BUTTON フェーズへ。"""
+        self._axis_index += 1
+        if self._axis_index >= len(cc_map.CC_AXES):
+            self._axis_index = 0
+            self._phase = Phase.BUTTON
+        else:
+            self._axis_value = cc_map.CENTER_14BIT
+            self._axis_leg = _Leg.TO_MAX
 
     def _tick_button(self) -> List[SendAction]:
         return []
