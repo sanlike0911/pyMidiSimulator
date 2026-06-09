@@ -142,3 +142,51 @@ class TestScalarPhase:
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
         _advance_to_phase(seq, Phase.EVENT)
         assert seq._phase is Phase.EVENT
+
+
+class TestEventPhase:
+    def test_sends_three_events_in_order_waiting_for_response(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
+        _advance_to_phase(seq, Phase.EVENT)
+
+        sent = []
+        pending = False
+        for _ in range(50):
+            actions = seq.tick(event_pending=pending)
+            events = [a for a in actions if a.kind is ActionKind.EVENT]
+            if events:
+                sent.append(events[0].target)
+                pending = True
+            else:
+                pending = False
+            if seq._phase is Phase.STICK:
+                break
+
+        assert sent == [cc_map.EVT_HEARTBEAT, cc_map.EVT_BUTTON_COMBO, cc_map.EVT_SENSOR_TRIGGER]
+
+    def test_does_not_advance_while_event_pending(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
+        _advance_to_phase(seq, Phase.EVENT)
+        first = seq.tick(event_pending=False)
+        assert first[0].kind is ActionKind.EVENT
+        assert seq.tick(event_pending=True) == []
+        assert seq.tick(event_pending=True) == []
+
+    def test_event_arg_increments_across_sends(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
+        _advance_to_phase(seq, Phase.EVENT)
+        a1 = seq.tick(event_pending=False)[0]
+        seq.tick(event_pending=False)
+        a2 = seq.tick(event_pending=False)[0]
+        assert a2.value == (a1.value + 1) & cc_map.MAX_7BIT
+
+    def test_completing_event_phase_loops_back_to_stick(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
+        _advance_to_phase(seq, Phase.EVENT)
+        for _ in range(20):
+            seq.tick(event_pending=False)
+            if seq._phase is Phase.STICK:
+                break
+        assert seq._phase is Phase.STICK
+        assert seq._axis_index == 0
+        assert seq._axis_value == cc_map.CENTER_14BIT

@@ -159,4 +159,17 @@ class AutoSequencer:
         return [action]
 
     def _tick_event(self, event_pending: bool) -> List[SendAction]:
+        if not self._event_sent:
+            opcode = _EVENT_OPCODES[self._event_index]
+            name = _EVENT_NAMES[self._event_index]
+            arg = self._event_arg
+            self._event_arg = (self._event_arg + 1) & cc_map.MAX_7BIT
+            self._event_sent = True
+            return [SendAction(ActionKind.EVENT, opcode, arg, f"イベント送信 {name} arg={arg}")]
+        if event_pending:
+            return []
+        self._event_index += 1
+        self._event_sent = False
+        if self._event_index >= len(_EVENT_OPCODES):
+            self._reset_cycle()
         return []
