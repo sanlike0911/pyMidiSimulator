@@ -180,6 +180,14 @@ class TestEventPhase:
         a2 = seq.tick(event_pending=False)[0]
         assert a2.value == (a1.value + 1) & cc_map.MAX_7BIT
 
+    def test_event_arg_wraps_at_max(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
+        _advance_to_phase(seq, Phase.EVENT)
+        seq._event_arg = cc_map.MAX_7BIT  # 127
+        action = seq.tick(event_pending=False)[0]
+        assert action.value == cc_map.MAX_7BIT   # 127 を送信
+        assert seq._event_arg == 0               # 次送信用に 0 へラップ
+
     def test_completing_event_phase_loops_back_to_stick(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
         _advance_to_phase(seq, Phase.EVENT)

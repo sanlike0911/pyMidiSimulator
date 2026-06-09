@@ -21,7 +21,7 @@
 - **`messaging.py`** - コマンド/イベント I/F ステートマシン（受信コマンド→ACK、イベント送信→応答待ち、seq、タイムアウト）。`send_cc` の注入と `tick()` 駆動で動作。
 - **`midi_io.py`** - python-rtmidi のラッパー（ポート列挙・7bit/14bit CC 送信・受信ディスパッチ）。
 - **`keyboard_map.py`** - pygame キー → セマンティックアクションのマッピングとヘルプテキスト。
-- **`tests/`** - pytest（`cc_map` / `messaging` の純粋ロジックを網羅）。
+- **`tests/`** - pytest（`cc_map` / `messaging` / `auto_sequencer` の純粋ロジックを網羅）。
 - **`setup.py`** - 依存確認・インストール・起動を行う補助スクリプト。
 
 ### 送受信 CC（コントローラ役視点）
@@ -113,7 +113,7 @@ python setup.py
 # 仮想環境内で
 pytest
 ```
-`cc_map` / `messaging` の純粋ロジックを対象にカバレッジを取得する（`pyproject.toml` で `testpaths=tests`）。MIDI / pygame / 対話 UI はユニットテスト対象外。
+`cc_map` / `messaging` / `auto_sequencer` の純粋ロジックを対象にカバレッジを取得する（`pyproject.toml` で `testpaths=tests`）。MIDI / pygame / 対話 UI はユニットテスト対象外。
 
 ## キーボード操作
 
