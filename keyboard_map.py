@@ -41,7 +41,7 @@ EVENT_KEYS: Dict[int, int] = {
     pygame.K_n: cc_map.EVT_SENSOR_TRIGGER,
 }
 
-TOGGLE_MODE_KEY = pygame.K_m
+AUTO_MODE_KEY = pygame.K_m
 HELP_KEY = pygame.K_SLASH
 QUIT_KEY = pygame.K_ESCAPE
 
@@ -56,7 +56,7 @@ def help_text() -> str:
         "  Error     : X=+1  Z=-1（CC41 0-127）\n"
         "  State     : V=+1  C=-1（CC42 0-127）\n"
         "  イベント  : G=HeartBeat  B=ButtonCombo  N=SensorTrigger（送信→応答待ち）\n"
-        "  モード切替: M（Stick ⇔ Slider・軸は原点リセット）\n"
+        "  自動入力  : M（自動デバッグ入力 ON/OFF・全要素を巡回送信）\n"
         "  その他    : /=ヘルプ再表示  ESC=終了\n"
         "  ※ コマンド(SetPreset 等)は Unity から受信し自動 ACK します"
     )

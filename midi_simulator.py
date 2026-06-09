@@ -18,6 +18,7 @@ import pygame
 import cc_map
 import keyboard_map
 import midi_io as midi_io_mod
+from auto_sequencer import ActionKind, AutoSequencer, SendAction
 from messaging import Messaging, MessagingState
 
 TICK_INTERVAL = 1.0 / 60.0
@@ -50,6 +51,8 @@ class ControllerSimulator:
         self._event_arg = 0
 
         self._help_requested = False
+        self._auto_mode = False
+        self._auto: Optional[AutoSequencer] = None
         self._prev_command = None
         self._prev_event_response = None
 
@@ -144,7 +147,10 @@ class ControllerSimulator:
             with self._lock:
                 for event in events:
                     self._apply_event(event)
-                self._ramp_axes(pressed)
+                if self._auto_mode:
+                    self._tick_auto()
+                else:
+                    self._ramp_axes(pressed)
                 self._messaging.tick()
                 snapshot = self._messaging.snapshot()
             if self._help_requested:
@@ -163,7 +169,10 @@ class ControllerSimulator:
             self._on_keyup(event.key)
 
     def _on_keydown(self, key: int) -> None:
-        """KEYDOWN: ボタン ON・離散 ±1・イベント送信・モード切替などを処理する。"""
+        """KEYDOWN: 自動モード中は M/ヘルプ/終了のみ受理。手動時はボタン/離散/イベント/中心点移動。"""
+        allowed_in_auto = (keyboard_map.AUTO_MODE_KEY, keyboard_map.HELP_KEY, keyboard_map.QUIT_KEY)
+        if self._auto_mode and key not in allowed_in_auto:
+            return
         if key in keyboard_map.BUTTON_KEYS:
             idx = keyboard_map.BUTTON_KEYS[key]
             self._buttons[idx] = True
@@ -185,13 +194,17 @@ class ControllerSimulator:
             self._send_event(keyboard_map.EVENT_KEYS[key])
         elif key == keyboard_map.AXIS_RESET_KEY:
             self._center_axes()
+        elif key == keyboard_map.AUTO_MODE_KEY:
+            self._toggle_auto_mode()
         elif key == keyboard_map.HELP_KEY:
             self._help_requested = True
         elif key == keyboard_map.QUIT_KEY:
             self._running = False
 
     def _on_keyup(self, key: int) -> None:
-        """KEYUP: ボタン OFF と、軸キー離上時の最終値ログを処理する。"""
+        """KEYUP: 自動モード中は無視。手動時はボタン OFF と軸キー離上時の最終値ログ。"""
+        if self._auto_mode:
+            return
         if key in keyboard_map.BUTTON_KEYS:
             idx = keyboard_map.BUTTON_KEYS[key]
             self._buttons[idx] = False
@@ -226,6 +239,55 @@ class ControllerSimulator:
                 msb_cc, lsb_cc = cc_map.CC_AXES[axis]
                 self._midi.send_14bit(msb_cc, lsb_cc, self._axis_raw[axis])
                 self._axis_sent[axis] = self._axis_raw[axis]
+
+    def _toggle_auto_mode(self) -> None:
+        """自動デバッグ入力モードを ON/OFF し、軸を中心点・全ボタン OFF に整える。"""
+        self._auto_mode = not self._auto_mode
+        if self._auto_mode:
+            self._auto = AutoSequencer(AUTO_STICK_STEP, AUTO_BUTTON_HOLD_TICKS, AUTO_CC_STEP)
+        self._all_buttons_off()
+        self._center_axes()
+        print(f"自動デバッグ入力: {'ON' if self._auto_mode else 'OFF'}")
+
+    def _all_buttons_off(self) -> None:
+        """押下中の全ボタンを OFF 送信する（自動/手動の残留点灯を解消）。"""
+        for idx in range(len(cc_map.BUTTON_CCS)):
+            if self._buttons[idx]:
+                self._buttons[idx] = False
+                self._midi.send_cc(cc_map.BUTTON_CCS[idx], 0)
+
+    def _tick_auto(self) -> None:
+        """自動シーケンスを 1 Tick 進め、返ったアクションを送信する。"""
+        event_pending = self._messaging.snapshot().event_pending
+        for action in self._auto.tick(event_pending):
+            self._dispatch_auto_action(action)
+
+    def _dispatch_auto_action(self, action: SendAction) -> None:
+        """AutoSequencer の SendAction を実際の MIDI 送信に変換する。"""
+        if action.kind is ActionKind.AXIS:
+            msb_cc, lsb_cc = cc_map.CC_AXES[action.target]
+            self._midi.send_14bit(msb_cc, lsb_cc, action.value)
+            self._axis_raw[action.target] = action.value
+            self._axis_sent[action.target] = action.value
+        elif action.kind is ActionKind.BUTTON:
+            self._buttons[action.target] = action.value > 0
+            self._midi.send_cc(cc_map.BUTTON_CCS[action.target], action.value)
+        elif action.kind is ActionKind.SCALAR:
+            self._sync_scalar(action.target, action.value)
+            self._midi.send_cc(action.target, action.value)
+        elif action.kind is ActionKind.EVENT:
+            self._messaging.send_event(action.target, action.value)
+        if action.log:
+            print(f"[AUTO] {action.log}")
+
+    def _sync_scalar(self, cc: int, value: int) -> None:
+        """自動送信したスカラー値を内部状態へ反映し、手動復帰時の整合を保つ。"""
+        if cc == cc_map.PRESET_CC:
+            self._preset = value
+        elif cc == cc_map.ERROR_CC:
+            self._error = value
+        elif cc == cc_map.STATE_CC:
+            self._state = value
 
     def _center_axes(self) -> None:
         """全軸を中心点(8192)へ移動して送信する。"""
