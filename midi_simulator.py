@@ -23,7 +23,12 @@ from messaging import Messaging, MessagingState
 TICK_INTERVAL = 1.0 / 60.0
 # 押下中ランプの 1 Tick あたりの 14bit 変化量（約 0.5 秒でフルスケール）
 STICK_STEP_PER_TICK = 550
-MODE_ORIGIN = {"stick": cc_map.CENTER_14BIT, "slider": 0}
+# 軸の中心点（初期値・"0" キー・自動モード遷移時の移動先）
+AXIS_CENTER = cc_map.CENTER_14BIT
+# --- 自動デバッグ入力モードのパラメータ ---
+AUTO_STICK_STEP = 550        # スティックスイープの 1 Tick あたり 14bit 変化量
+AUTO_BUTTON_HOLD_TICKS = 15  # 各ボタンの ON 保持 Tick 数（≒0.25s @60fps）
+AUTO_CC_STEP = 8             # Preset/Error/State スイープの刻み（0→127 を約16段）
 
 
 class ControllerSimulator:
@@ -35,9 +40,7 @@ class ControllerSimulator:
         self._lock = threading.Lock()  # MIDI 出力と messaging を直列化（受信は別スレッド）
         self._running = True
 
-        self._mode = "stick"
-        origin = MODE_ORIGIN[self._mode]
-        self._axis_raw: List[int] = [origin] * 4
+        self._axis_raw: List[int] = [AXIS_CENTER] * 4
         self._axis_sent: List[int] = [-1] * 4  # -1 = 未送信（初回必ず送る）
 
         self._buttons = [False] * len(cc_map.BUTTON_CCS)
@@ -56,7 +59,6 @@ class ControllerSimulator:
         try:
             print("MIDI Controller Simulator - 新仕様対応（コントローラ役）")
             print("=" * 56)
-            self._select_mode()
             if not self._setup_ports():
                 return
             self._init_window()
@@ -67,24 +69,6 @@ class ControllerSimulator:
             print("\n終了します...")
         finally:
             self._cleanup()
-
-    def _select_mode(self) -> None:
-        """Stick / Slider のスティック解釈モードを選択する。"""
-        print("\nスティック解釈モード:")
-        print("  1: Stick （双極・中央 8192 基準・-1.0 … +1.0）")
-        print("  2: Slider（単極・0 基準・0.0 … 1.0）")
-        while True:
-            choice = input("モードを選択してください (1-2): ").strip()
-            if choice == "1":
-                self._mode = "stick"
-                break
-            if choice == "2":
-                self._mode = "slider"
-                break
-            print("1 または 2 を入力してください。")
-        origin = MODE_ORIGIN[self._mode]
-        self._axis_raw = [origin] * 4
-        print(f"モード: {self._mode}（原点 {origin}）")
 
     def _setup_ports(self) -> bool:
         """出力ポート（必須）と入力ポート（任意）を選択して開く。"""
@@ -200,9 +184,7 @@ class ControllerSimulator:
         elif key in keyboard_map.EVENT_KEYS:
             self._send_event(keyboard_map.EVENT_KEYS[key])
         elif key == keyboard_map.AXIS_RESET_KEY:
-            self._reset_axes()
-        elif key == keyboard_map.TOGGLE_MODE_KEY:
-            self._toggle_mode()
+            self._center_axes()
         elif key == keyboard_map.HELP_KEY:
             self._help_requested = True
         elif key == keyboard_map.QUIT_KEY:
@@ -245,26 +227,19 @@ class ControllerSimulator:
                 self._midi.send_14bit(msb_cc, lsb_cc, self._axis_raw[axis])
                 self._axis_sent[axis] = self._axis_raw[axis]
 
-    def _reset_axes(self) -> None:
-        """全軸を現モードの原点へ戻して送信する。"""
-        origin = MODE_ORIGIN[self._mode]
+    def _center_axes(self) -> None:
+        """全軸を中心点(8192)へ移動して送信する。"""
         for axis in range(4):
-            self._axis_raw[axis] = origin
+            self._axis_raw[axis] = AXIS_CENTER
             msb_cc, lsb_cc = cc_map.CC_AXES[axis]
-            self._midi.send_14bit(msb_cc, lsb_cc, origin)
-            self._axis_sent[axis] = origin
-        print(f"全軸を原点 {origin} へ")
-
-    def _toggle_mode(self) -> None:
-        """Stick ⇔ Slider を切り替え、軸を新原点へリセットする。"""
-        self._mode = "slider" if self._mode == "stick" else "stick"
-        print(f"モード切替: {self._mode}（原点 {MODE_ORIGIN[self._mode]}）")
-        self._reset_axes()
+            self._midi.send_14bit(msb_cc, lsb_cc, AXIS_CENTER)
+            self._axis_sent[axis] = AXIS_CENTER
+        print(f"全軸を中心点 {AXIS_CENTER} へ移動")
 
     def _log_axis(self, axis: int) -> None:
-        """軸の現在値と正規化値をログ出力する。"""
+        """軸の現在値と正規化値（双極 -1..+1）をログ出力する。"""
         raw = self._axis_raw[axis]
-        norm = cc_map.norm14_bipolar(raw) if self._mode == "stick" else cc_map.norm_slider(raw)
+        norm = cc_map.norm14_bipolar(raw)
         print(f"{cc_map.AXIS_NAMES[axis]}: {raw} ({norm:+.3f})")
 
     # --- 受信処理（別スレッド → lock）-------------------------------------
