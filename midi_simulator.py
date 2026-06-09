@@ -25,6 +25,32 @@ TICK_INTERVAL = 1.0 / 60.0
 STICK_STEP_PER_TICK = 550
 MODE_ORIGIN = {"stick": cc_map.CENTER_14BIT, "slider": 0}
 
+# pygame ウィンドウ HUD 用フォント。デフォルト(SysFont(None))は日本語グリフを持たず
+# 文字化けするため、日本語対応フォントを OS 横断の候補から探索する。
+HUD_FONT_SIZE = 22
+JP_FONT_CANDIDATES = (
+    "Yu Gothic UI", "Meiryo", "MS Gothic",            # Windows
+    "Hiragino Sans", "Hiragino Kaku Gothic Pro",      # macOS
+    "Noto Sans CJK JP", "IPAGothic", "VL Gothic",     # Linux
+)
+
+
+def load_jp_font(size: int) -> pygame.font.Font:
+    """日本語グリフを持つシステムフォントを探して返す。
+
+    候補を順に試し、'あ' のグリフを持つ最初のフォントを採用する。どれも見つからなければ
+    pygame デフォルト（日本語非対応）にフォールバックする。pygame.font.init() 済みが前提。
+    """
+    for name in JP_FONT_CANDIDATES:
+        path = pygame.font.match_font(name)
+        if not path:
+            continue
+        font = pygame.font.Font(path, size)
+        metrics = font.metrics("あ")
+        if metrics and metrics[0] is not None:
+            return font
+    return pygame.font.SysFont(None, size)
+
 
 class ControllerSimulator:
     """コントローラ役の MIDI シミュレータ本体。"""
@@ -140,7 +166,7 @@ class ControllerSimulator:
         pygame.init()
         screen = pygame.display.set_mode((520, 130))
         pygame.display.set_caption("MIDI Controller Simulator")
-        font = pygame.font.SysFont(None, 22)
+        font = load_jp_font(HUD_FONT_SIZE)
         screen.fill((18, 18, 26))
         lines = [
             "MIDI Controller Simulator (controller role)",
