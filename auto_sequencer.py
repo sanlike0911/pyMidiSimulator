@@ -143,7 +143,20 @@ class AutoSequencer:
         return []
 
     def _tick_scalar(self) -> List[SendAction]:
-        return []
+        cc = _SCALAR_CCS[self._scalar_index]
+        name = _SCALAR_NAMES[self._scalar_index]
+        value = min(self._scalar_value, cc_map.MAX_7BIT)
+        log = f"{name} = {value}" if value in (0, cc_map.MAX_7BIT) else None
+        action = SendAction(ActionKind.SCALAR, cc, value, log)
+        if self._scalar_value >= cc_map.MAX_7BIT:
+            self._scalar_index += 1
+            self._scalar_value = 0
+            if self._scalar_index >= len(_SCALAR_CCS):
+                self._scalar_index = 0
+                self._phase = Phase.EVENT
+        else:
+            self._scalar_value += self._cc_step
+        return [action]
 
     def _tick_event(self, event_pending: bool) -> List[SendAction]:
         return []

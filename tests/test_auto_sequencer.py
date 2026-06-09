@@ -112,3 +112,33 @@ class TestButtonPhase:
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=2, cc_step=64)
         _advance_to_phase(seq, Phase.SCALAR)
         assert seq._phase is Phase.SCALAR
+
+
+class TestScalarPhase:
+    def test_sweeps_preset_error_state_in_order(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
+        _advance_to_phase(seq, Phase.SCALAR)
+
+        by_cc = {cc_map.PRESET_CC: [], cc_map.ERROR_CC: [], cc_map.STATE_CC: []}
+        order = []
+        for _ in range(300):
+            if seq._phase is not Phase.SCALAR:
+                break
+            for a in seq.tick(event_pending=False):
+                if a.kind is ActionKind.SCALAR:
+                    by_cc[a.target].append(a.value)
+                    if a.target not in order:
+                        order.append(a.target)
+
+        # Preset(40) → Error(41) → State(42) の順で処理される
+        assert order == [cc_map.PRESET_CC, cc_map.ERROR_CC, cc_map.STATE_CC]
+        # 各スカラーは 0 から始まり 127 で終わる
+        for cc in (cc_map.PRESET_CC, cc_map.ERROR_CC, cc_map.STATE_CC):
+            assert by_cc[cc][0] == 0
+            assert by_cc[cc][-1] == cc_map.MAX_7BIT
+            assert max(by_cc[cc]) == cc_map.MAX_7BIT  # 127 を超えない
+
+    def test_enters_event_phase_after_state(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
+        _advance_to_phase(seq, Phase.EVENT)
+        assert seq._phase is Phase.EVENT
