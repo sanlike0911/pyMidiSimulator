@@ -65,3 +65,50 @@ class TestStickPhase:
         second = seq.tick(event_pending=False)[0]   # 16383（上端）
         assert second.value == cc_map.MAX_14BIT
         assert second.log is not None
+
+
+def _advance_to_phase(seq: AutoSequencer, phase: Phase, limit: int = 2000):
+    """目的フェーズに到達するまで tick を回す（応答待ちは即解決扱い）。"""
+    for _ in range(limit):
+        if seq._phase is phase:
+            return
+        seq.tick(event_pending=False)
+    raise AssertionError(f"{phase} に到達しませんでした")
+
+
+class TestButtonPhase:
+    def test_each_button_turns_on_then_off_in_order(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=2, cc_step=64)
+        _advance_to_phase(seq, Phase.BUTTON)
+
+        on_order, off_order = [], []
+        for _ in range(200):
+            if seq._phase is not Phase.BUTTON:
+                break
+            for a in seq.tick(event_pending=False):
+                if a.kind is ActionKind.BUTTON and a.value == cc_map.MAX_7BIT:
+                    on_order.append(a.target)
+                elif a.kind is ActionKind.BUTTON and a.value == 0:
+                    off_order.append(a.target)
+
+        assert on_order == list(range(len(cc_map.BUTTON_CCS)))   # 0..9 を順に ON
+        assert off_order == list(range(len(cc_map.BUTTON_CCS)))  # 0..9 を順に OFF
+
+    def test_button_held_for_configured_ticks(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=3, cc_step=64)
+        _advance_to_phase(seq, Phase.BUTTON)
+
+        # ON の Tick
+        on = seq.tick(event_pending=False)
+        assert on[0].kind is ActionKind.BUTTON and on[0].value == cc_map.MAX_7BIT
+        # 保持中（button_hold_ticks=3 未満）は何も出ない
+        assert seq.tick(event_pending=False) == []
+        assert seq.tick(event_pending=False) == []
+        # 3 Tick 目で OFF
+        off = seq.tick(event_pending=False)
+        assert off[0].kind is ActionKind.BUTTON and off[0].value == 0
+
+    def test_enters_scalar_phase_after_last_button(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=2, cc_step=64)
+        _advance_to_phase(seq, Phase.SCALAR)
+        assert seq._phase is Phase.SCALAR

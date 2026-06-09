@@ -127,6 +127,19 @@ class AutoSequencer:
             self._axis_leg = _Leg.TO_MAX
 
     def _tick_button(self) -> List[SendAction]:
+        idx = self._button_index
+        if not self._button_on:
+            self._button_on = True
+            self._hold_counter = 0
+            return [SendAction(ActionKind.BUTTON, idx, cc_map.MAX_7BIT, f"ボタン{idx} ON")]
+        self._hold_counter += 1
+        if self._hold_counter >= self._button_hold_ticks:
+            self._button_on = False
+            self._button_index += 1
+            if self._button_index >= len(cc_map.BUTTON_CCS):
+                self._button_index = 0
+                self._phase = Phase.SCALAR
+            return [SendAction(ActionKind.BUTTON, idx, 0, f"ボタン{idx} OFF")]
         return []
 
     def _tick_scalar(self) -> List[SendAction]:
