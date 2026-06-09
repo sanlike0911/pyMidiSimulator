@@ -61,9 +61,19 @@ class MidiIO:
         self._in.set_callback(self._callback)
 
     def _callback(self, message, data=None) -> None:
-        """rtmidi 受信コールバック。CC のみ抽出してディスパッチする（別スレッド）。"""
+        """rtmidi 受信コールバック。送信と同一チャンネルの CC のみ抽出してディスパッチする（別スレッド）。
+
+        ステータスの上位ニブル（CC 判定）に加え、下位ニブル（チャンネル）も `MIDI_CHANNEL` と
+        一致するもののみ処理する。これにより、同一入力ポートに別チャンネルの CC#50/51/52/53 が
+        流れても、コマンド引数・commit・イベント ACK として誤処理しない。
+        """
         msg, _timestamp = message
-        if len(msg) >= 3 and (msg[0] & 0xF0) == _CC_STATUS and self._on_cc is not None:
+        if (
+            len(msg) >= 3
+            and (msg[0] & 0xF0) == _CC_STATUS
+            and (msg[0] & 0x0F) == MIDI_CHANNEL
+            and self._on_cc is not None
+        ):
             self._on_cc(msg[1], msg[2])
 
     def has_input(self) -> bool:
