@@ -80,15 +80,6 @@ MODE_NAMES: dict[int, str] = {
 VALVE_OPEN = 0
 VALVE_CLOSE = 1
 
-# --- 旧 opcode 定数（移行用エイリアス・参照側更新後に削除予定） -------------
-CMD_PING = OP_PING
-CMD_LED = 1
-CMD_HAPTIC = 2
-CMD_SET_PRESET = OP_SET_PRESET
-EVT_HEARTBEAT = 0
-EVT_BUTTON_COMBO = 1
-EVT_SENSOR_TRIGGER = 2
-
 
 def clamp(value: int, low: int, high: int) -> int:
     """value を [low, high] にクランプする。"""

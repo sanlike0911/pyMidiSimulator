@@ -1,11 +1,14 @@
-"""コマンド/イベント I/F ステートマシン（コントローラ役）。
+"""コマンド/イベント I/F ステートマシン（コントローラ役・プロトコル層）。
 
-仕様: docs/specs/midi-mapping.md セクション7。
-- コマンド（Unity -> Sim）: 受信して即 ACK を返す（本シミュレータは受信者）。
+仕様: docs/specs/midi-mapping.md セクション5。
+- コマンド（Unity -> Sim）: フレーミング（ARG バッファ -> OP commit）して
+  「検証 -> ACK -> 実行」の順で処理する（本シミュレータは受信者）。
+  opcode 別の検証/実行は注入された validate_command / execute_command（controller_state）
+  に委譲し、本モジュールは ACK・seqEcho・引数消費のみ担う。
 - イベント（Sim -> Unity）: 送信して応答（ACK）を待つ（本シミュレータは送信者）。
 
-MIDI / pygame に依存せず、CC 送信関数（send_cc）の注入とフレーム駆動（tick）だけで動作する。
-これによりユニットテスト可能。
+MIDI / pygame に依存せず、CC 送信関数（send_cc）とコマンドハンドラの注入、
+フレーム駆動（tick）だけで動作する。これによりユニットテスト可能。
 """
 from __future__ import annotations
 
@@ -45,15 +48,12 @@ class _PendingEvent:
 
     opcode: int
     seq: int
-    arg: int
 
 
 @dataclass(frozen=True)
 class MessagingState:
     """表示用スナップショット。"""
 
-    received_preset: Optional[int]
-    preset_option: int
     last_command: Optional[CommandRecord]
     last_event_response: Optional[EventResponse]
     event_pending: bool
@@ -62,8 +62,15 @@ class MessagingState:
 class Messaging:
     """コマンド受信＋ACK と、イベント送信＋応答待ちを担うステートマシン。"""
 
-    def __init__(self, send_cc: Callable[[int, int], None]) -> None:
+    def __init__(
+        self,
+        send_cc: Callable[[int, int], None],
+        validate_command: Callable[[int, int, int], int],
+        execute_command: Callable[[int, int, int], None],
+    ) -> None:
         self._send_cc = send_cc
+        self._validate_command = validate_command  # (opcode, arg1, arg2) -> STATUS（ACK 前）
+        self._execute_command = execute_command    # OK の場合のみ ACK 後に呼ぶ
 
         # 受信コマンドの引数バッファ（OP commit 後にクリア）
         self._arg1: Optional[int] = None
@@ -75,8 +82,6 @@ class Messaging:
         self._next_event_seq = 0  # 送信ごとに 0↔1 反転
 
         # 表示用状態
-        self._received_preset: Optional[int] = None
-        self._preset_option = 0
         self._last_command: Optional[CommandRecord] = None
         self._last_event_response: Optional[EventResponse] = None
 
@@ -93,49 +98,45 @@ class Messaging:
             self._handle_event_response(value)
 
     def _commit_command(self, op_value: int) -> None:
-        """CMD_OP 到着で直前の引数とあわせて 1 件のコマンドを実行し、ACK を返す。"""
+        """CMD_OP 到着で 1 件のコマンドを確定し「検証 -> ACK -> 実行」の順で処理する。
+
+        仕様: Reset / SetMode は「ACK 送信後に実行/遷移」。実行を ACK の後に置くことで
+        全 opcode でこの規約を構造的に満たす。
+        """
         opcode = cc_map.payload_of(op_value)
         seq = cc_map.seq_of(op_value)
         arg1 = self._arg1 if self._arg1 is not None else 0
         arg2 = self._arg2 if self._arg2 is not None else 0
 
-        status = self._process_command(opcode, arg1, arg2)
+        status = self._validate_command(opcode, arg1, arg2)
 
         # 受信側へ ACK（status + seqEcho）。seqEcho は受信コマンドの seq をそのまま返す。
         self._send_cc(cc_map.CMDRSP_STATUS_CC, cc_map.pack_seq(status, seq))
+        if status == cc_map.STATUS_OK:
+            self._execute_command(opcode, arg1, arg2)
         self._last_command = CommandRecord(opcode, arg1, arg2, status, seq)
 
         # 実行後に引数を消費（次コマンドで送られなかった引数は 0 とするため）
         self._arg1 = None
         self._arg2 = None
 
-    def _process_command(self, opcode: int, arg1: int, arg2: int) -> int:
-        """opcode 別にコマンドを処理し、STATUS を返す。"""
-        if opcode == cc_map.CMD_PING:
-            return cc_map.STATUS_OK
-        if opcode == cc_map.CMD_SET_PRESET:
-            if 0 <= arg1 <= cc_map.MAX_7BIT:
-                self._received_preset = arg1
-                self._preset_option = arg2
-                return cc_map.STATUS_OK
-            return cc_map.STATUS_INVALID_ARG
-        if opcode in (cc_map.CMD_LED, cc_map.CMD_HAPTIC):
-            return cc_map.STATUS_OK
-        return cc_map.STATUS_UNKNOWN_OP
-
     # --- イベント送信 -------------------------------------------------------
-    def send_event(self, opcode: int, arg: int) -> bool:
-        """イベントを送信する。保留中（応答待ち）なら抑止して False を返す。"""
+    def send_event(self, opcode: int, arg: Optional[int] = None) -> bool:
+        """イベントを送信する。保留中（応答待ち）なら抑止して False を返す。
+
+        arg=None は ARG 未使用イベント（確定仕様では Ping）で、仕様の正規例に合わせて
+        EVT_ARG の送信自体を省略する（受信側は省略時 0 と解釈する）。
+        """
         if self._pending is not None:
             return False
 
         seq = self._next_event_seq
-        arg7 = arg & 0x7F
         # ARG -> OP の順。OP の到着が commit。
-        self._send_cc(cc_map.EVT_ARG_CC, arg7)
+        if arg is not None:
+            self._send_cc(cc_map.EVT_ARG_CC, arg & 0x7F)
         self._send_cc(cc_map.EVT_OP_CC, cc_map.pack_seq(opcode, seq))
 
-        self._pending = _PendingEvent(opcode=opcode, seq=seq, arg=arg7)
+        self._pending = _PendingEvent(opcode=opcode, seq=seq)
         self._pending_ticks = 0
         self._next_event_seq ^= 1
         return True
@@ -154,6 +155,11 @@ class Messaging:
             timed_out=False,
         )
         self._pending = None
+
+    def clear_pending(self) -> None:
+        """保留中イベントを応答記録なしで破棄する（Reset コマンド実行時に呼ぶ）。"""
+        self._pending = None
+        self._pending_ticks = 0
 
     # --- フレーム駆動 -------------------------------------------------------
     def tick(self) -> None:
@@ -174,8 +180,6 @@ class Messaging:
     def snapshot(self) -> MessagingState:
         """現在の表示用状態を返す。"""
         return MessagingState(
-            received_preset=self._received_preset,
-            preset_option=self._preset_option,
             last_command=self._last_command,
             last_event_response=self._last_event_response,
             event_pending=self._pending is not None,

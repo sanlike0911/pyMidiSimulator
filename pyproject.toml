@@ -1,4 +1,4 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "--cov=cc_map --cov=messaging --cov=auto_sequencer --cov-report=term-missing"
+addopts = "--cov=cc_map --cov=messaging --cov=auto_sequencer --cov=controller_state --cov-report=term-missing"

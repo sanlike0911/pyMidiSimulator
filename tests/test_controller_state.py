@@ -76,6 +76,18 @@ class TestSetScalar:
         assert cs.preset == 64
         assert s.sent == [(cc_map.PRESET_CC, 64)]
 
+    def test_set_scalar_handles_each_scalar_cc(self):
+        cs, s, _r, _l = make()
+        cs.set_scalar(cc_map.STATE_CC, 10)
+        cs.set_scalar(cc_map.ERROR_CC, 20)
+        cs.set_scalar(cc_map.PRESET_CC, 30)
+        assert (cs.state, cs.error, cs.preset) == (10, 20, 30)
+        assert s.sent == [
+            (cc_map.STATE_CC, 10),
+            (cc_map.ERROR_CC, 20),
+            (cc_map.PRESET_CC, 30),
+        ]
+
     def test_set_scalar_skips_unchanged_value(self):
         cs, s, _r, _l = make()
         cs.set_scalar(cc_map.STATE_CC, 0)  # 初期値と同値

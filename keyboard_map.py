@@ -35,11 +35,9 @@ PRESET_KEYS: Dict[int, int] = {pygame.K_RIGHTBRACKET: +1, pygame.K_LEFTBRACKET: 
 ERROR_KEYS: Dict[int, int] = {pygame.K_x: +1, pygame.K_z: -1}
 STATE_KEYS: Dict[int, int] = {pygame.K_v: +1, pygame.K_c: -1}
 
-# イベント送信（KEYDOWN）: key -> opcode（イベント名前空間）
+# イベント送信（KEYDOWN）: key -> opcode。確定イベントは Ping(0) のみ（G⇄C 双方向）。
 EVENT_KEYS: Dict[int, int] = {
-    pygame.K_g: cc_map.EVT_HEARTBEAT,
-    pygame.K_b: cc_map.EVT_BUTTON_COMBO,
-    pygame.K_n: cc_map.EVT_SENSOR_TRIGGER,
+    pygame.K_g: cc_map.OP_PING,
 }
 
 AUTO_MODE_KEY = pygame.K_m
@@ -55,11 +53,12 @@ def help_text() -> str:
         "  右スティック: ↑=上(Y+)  ↓=下(Y-)  ←=左(X-)  →=右(X+)（押下中ランプ）\n"
         "  R          : 全軸を中心点へ移動\n"
         "  ボタン0-9 : 1 2 3 4 5 6 7 8 9 0（押下=ON / 離上=OFF）\n"
-        "  Preset    : ]=+1  [=-1（CC40 0-127）\n"
-        "  Error     : X=+1  Z=-1（CC41 0-127）\n"
-        "  State     : V=+1  C=-1（CC42 0-127）\n"
-        "  イベント  : G=HeartBeat  B=ButtonCombo  N=SensorTrigger（送信→応答待ち）\n"
+        "  Preset    : ]=+1  [=-1（CC105 0-127・変化時送信）\n"
+        "  Error     : X=+1  Z=-1（CC104 0-127・変化時送信）\n"
+        "  State     : V=+1  C=-1（CC102 0-127・変化時送信）\n"
+        "  イベント  : G=Ping（送信→応答待ち）\n"
         "  自動入力  : M（自動デバッグ入力 ON/OFF・全要素を巡回送信）\n"
         "  その他    : /=ヘルプ再表示  ESC=終了\n"
-        "  ※ コマンド(SetPreset 等)は Unity から受信し自動 ACK します"
+        "  ※ コマンド(Ping/Reset/SetMode/SetZero/SetPreset/SetValve)は\n"
+        "     Unity から受信し自動 ACK します"
     )
