@@ -34,6 +34,18 @@ NAMED_CCS: dict[str, tuple[int, str]] = {
 
 AXIS_LABELS = ("左スティック X", "左スティック Y", "右スティック X", "右スティック Y")
 
+# opcode 表の名称（英字部分）-> 実装定数
+OPCODE_CONSTANTS: dict[str, int] = {
+    "Ping": cc_map.OP_PING,
+    "Reset": cc_map.OP_RESET,
+    "SetMode": cc_map.OP_SET_MODE,
+    "SetZero": cc_map.OP_SET_ZERO,
+    "SetPreset": cc_map.OP_SET_PRESET,
+    "SetValve": cc_map.OP_SET_VALVE,
+}
+
+OPCODE_SECTION_MARKER = "**opcode（bit0–5・コマンド/イベント共通の番号空間）**"
+
 
 @pytest.fixture(scope="module")
 def spec_text() -> str:
@@ -51,6 +63,27 @@ def _quick_table_rows(spec_text: str) -> list[tuple[str, str, str]]:
             rows.append((m.group(1), m.group(2), m.group(3)))
     assert rows, "早見表から CC 行をパースできない（フォーマット変更の可能性）"
     return rows
+
+
+def _opcode_table_rows(spec_text: str) -> list[tuple[int, str, str, str]]:
+    """コード値セクションの opcode 表から (op, 名称, 方向欄, ARG1欄) を抽出する。"""
+    assert OPCODE_SECTION_MARKER in spec_text, "仕様書に opcode 表セクションが見つからない"
+    section = spec_text.split(OPCODE_SECTION_MARKER, 1)[1]
+    section = section.split("###", 1)[0]  # 次の見出しまで（早見表等への誤マッチを防ぐ）
+    rows = []
+    for line in section.splitlines():
+        m = re.match(
+            r"^\|\s*(\d+)\s*\|\s*([A-Za-z]+)[^|]*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", line
+        )
+        if m:
+            rows.append((int(m.group(1)), m.group(2), m.group(3), m.group(4)))
+    assert rows, "opcode 表から行をパースできない（フォーマット変更の可能性）"
+    return rows
+
+
+def _normalize_direction(cell: str) -> str:
+    """方向欄（例: '**G⇄C（双方向）**', 'G→C'）から方向トークンを取り出す。"""
+    return cell.replace("*", "").split("（", 1)[0].strip()
 
 
 class TestQuickTable:
@@ -83,7 +116,12 @@ class TestQuickTable:
 
     @pytest.mark.parametrize(
         ("label", "constant"),
-        [("Preset", cc_map.PRESET_CC), ("Error", cc_map.ERROR_CC), ("State", cc_map.STATE_CC)],
+        [
+            ("State", cc_map.STATE_CC),
+            ("Mode", cc_map.MODE_CC),
+            ("Error", cc_map.ERROR_CC),
+            ("Preset", cc_map.PRESET_CC),
+        ],
     )
     def test_scalar_ccs(self, spec_text: str, label: str, constant: int) -> None:
         rows = _quick_table_rows(spec_text)
@@ -107,13 +145,24 @@ class TestQuickTable:
             f"{name} の CC が仕様と不一致（仕様={matched[0][0]} / 実装={constant}）"
         )
 
+    def test_no_cc_number_shared_between_in_and_out(self, spec_text: str) -> None:
+        """仕様の規約「IN / OUT で CC 番号の重複なし」を実装定数側でも検証する。"""
+        sent = {msb for msb, _ in cc_map.CC_AXES} | {lsb for _, lsb in cc_map.CC_AXES}
+        sent |= set(cc_map.BUTTON_CCS)
+        sent |= {cc_map.STATE_CC, cc_map.MODE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC}
+        sent |= {cc_map.CMDRSP_STATUS_CC, cc_map.EVT_ARG_CC, cc_map.EVT_OP_CC}
+        received = {
+            cc_map.CMD_ARG1_CC, cc_map.CMD_ARG2_CC, cc_map.CMD_OP_CC, cc_map.EVTRSP_STATUS_CC
+        }
+        assert not (sent & received), f"送信 CC と受信 CC が重複: {sorted(sent & received)}"
+
 
 class TestCodeValues:
-    """コード値（STATUS / opcode）の照合。"""
+    """コード値（STATUS / opcode / ARG1 値体系）の照合。"""
 
     def test_status_codes(self, spec_text: str) -> None:
         pairs = re.findall(
-            r"^\|\s*(\d+)\s*\|\s*(OK|UNKNOWN_OP|INVALID_ARG|REJECTED)（", spec_text, re.M
+            r"^\|\s*(\d+)\s*\|\s*(OK|UNKNOWN_OP|INVALID_ARG|REJECTED)\s*\|", spec_text, re.M
         )
         parsed = {name: int(value) for value, name in pairs}
         assert parsed == {
@@ -123,22 +172,47 @@ class TestCodeValues:
             "REJECTED": cc_map.STATUS_REJECTED,
         }, "STATUS コードが仕様と不一致（またはパース不能）"
 
-    def test_set_preset_opcode(self, spec_text: str) -> None:
-        m = re.search(r"^\|\s*(\d+)\s*\|\s*\*\*SetPreset\*\*", spec_text, re.M)
-        assert m, "opcode 表から SetPreset の行をパースできない"
-        assert cc_map.CMD_SET_PRESET == int(m.group(1)), "SetPreset opcode が仕様と不一致"
-
-    def test_event_opcodes(self, spec_text: str) -> None:
-        # 例示扱いだが実装はこの値に合わせているため、表が変わったら検出する。
-        rows = re.findall(
-            r"^\|\s*(\d+)\s*\|[^|]+\|\s*(HeartBeat|ButtonCombo|SensorTrigger)\s*\|", spec_text, re.M
+    @pytest.mark.parametrize(("name", "constant"), list(OPCODE_CONSTANTS.items()))
+    def test_opcode_numbers(self, spec_text: str, name: str, constant: int) -> None:
+        rows = _opcode_table_rows(spec_text)
+        matched = [r for r in rows if r[1] == name]
+        assert len(matched) == 1, f"opcode 表に {name} の行が 1 行見つからない"
+        assert constant == matched[0][0], (
+            f"{name} の opcode が仕様と不一致（仕様={matched[0][0]} / 実装={constant}）"
         )
-        parsed = {name: int(op) for op, name in rows}
-        assert parsed == {
-            "HeartBeat": cc_map.EVT_HEARTBEAT,
-            "ButtonCombo": cc_map.EVT_BUTTON_COMBO,
-            "SensorTrigger": cc_map.EVT_SENSOR_TRIGGER,
-        }, "イベント opcode が仕様の例示と不一致（またはパース不能）"
+
+    def test_all_spec_opcodes_are_implemented(self, spec_text: str) -> None:
+        """仕様に確定 opcode が追加されたら実装側の定数表も追従させる。"""
+        spec_names = {name for _op, name, _d, _a in _opcode_table_rows(spec_text)}
+        assert spec_names == set(OPCODE_CONSTANTS), (
+            "仕様の opcode 表と実装の対応表が不一致（opcode の追加/削除に追従すること）"
+        )
+
+    def test_event_opcodes_match_directions(self, spec_text: str) -> None:
+        """イベント経路（Sim 送信）で使える opcode（方向 C→G / G⇄C）と実装定数の照合。"""
+        rows = _opcode_table_rows(spec_text)
+        event_ops = {
+            op for op, _name, direction, _arg1 in rows
+            if _normalize_direction(direction) in ("C→G", "G⇄C")
+        }
+        assert event_ops == set(cc_map.EVENT_OPCODES), (
+            "イベント経路で送信可能な opcode が実装の EVENT_OPCODES と不一致"
+        )
+
+    def test_set_mode_arg_values(self, spec_text: str) -> None:
+        rows = _opcode_table_rows(spec_text)
+        arg1_cell = next(r[3] for r in rows if r[1] == "SetMode")
+        values = tuple(int(v) for v in re.findall(r"(\d+)\s*=", arg1_cell))
+        assert values == cc_map.MODE_VALUES, "SetMode の ARG1 値（モード値体系）が仕様と不一致"
+
+    def test_set_valve_arg_values(self, spec_text: str) -> None:
+        rows = _opcode_table_rows(spec_text)
+        arg1_cell = next(r[3] for r in rows if r[1] == "SetValve")
+        open_m = re.search(r"(\d+)\s*=\s*open", arg1_cell)
+        close_m = re.search(r"(\d+)\s*=\s*close", arg1_cell)
+        assert open_m and close_m, "SetValve の ARG1 欄から open/close をパースできない"
+        assert cc_map.VALVE_OPEN == int(open_m.group(1)), "VALVE_OPEN が仕様と不一致"
+        assert cc_map.VALVE_CLOSE == int(close_m.group(1)), "VALVE_CLOSE が仕様と不一致"
 
 
 class TestProtocolConstants:
