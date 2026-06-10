@@ -101,12 +101,11 @@ class ControllerState:
         self._send_cc(cc, value)
 
     # --- コマンド処理（messaging から注入呼び出し） --------------------------
-    def validate_command(self, opcode: int, arg1: int, arg2: int) -> int:
+    def validate_command(self, opcode: int, arg1: int, _arg2: int) -> int:
         """ACK 前の検証。STATUS を返し、状態は変更しない。
 
         共通規約: 未使用 ARG は検証しない（現行確定 opcode の arg2 はすべて未使用）。
         """
-        del arg2
         if opcode in (cc_map.OP_PING, cc_map.OP_RESET, cc_map.OP_SET_ZERO):
             return cc_map.STATUS_OK
         if opcode == cc_map.OP_SET_MODE:
@@ -123,9 +122,8 @@ class ControllerState:
             return cc_map.STATUS_OK
         return cc_map.STATUS_UNKNOWN_OP
 
-    def execute_command(self, opcode: int, arg1: int, arg2: int) -> None:
+    def execute_command(self, opcode: int, arg1: int, _arg2: int) -> None:
         """ACK 後の実行。validate が OK を返したコマンドのみ呼ばれる。"""
-        del arg2
         if opcode == cc_map.OP_RESET:
             self._execute_reset()
         elif opcode == cc_map.OP_SET_MODE:
