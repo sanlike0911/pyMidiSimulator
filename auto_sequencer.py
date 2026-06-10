@@ -18,7 +18,7 @@ class ActionKind(Enum):
     AXIS = "axis"      # target=軸index(0-3),    value=14bit raw(0-16383)
     BUTTON = "button"  # target=ボタンindex(0-9), value=127|0
     SCALAR = "scalar"  # target=CC番号,           value=0-127
-    EVENT = "event"    # target=opcode,           value=arg(0-127)
+    EVENT = "event"    # target=opcode,           value=未使用(0)。確定イベント Ping は ARG なし
 
 
 @dataclass(frozen=True)
@@ -48,13 +48,15 @@ class _Leg(Enum):
     TO_CENTER = 2   # 下端 0 → 中心 8192（到達で軸完了）
 
 
-# スカラーフェーズ対象（Preset, Error, State）
-_SCALAR_CCS = (cc_map.PRESET_CC, cc_map.ERROR_CC, cc_map.STATE_CC)
-_SCALAR_NAMES = ("Preset", "Error", "State")
+# スカラーフェーズ対象（State, Error, Preset — CC 昇順）。
+# Mode(CC103) は「現在の動作モード」の通知であり、巡回送信すると受信側が実際の
+# モード遷移と誤認しうるため対象外（通知は SetMode 起点と初期通知に限定する）。
+_SCALAR_CCS = (cc_map.STATE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC)
+_SCALAR_NAMES = ("State", "Error", "Preset")
 
-# イベントフェーズ対象 opcode
-_EVENT_OPCODES = (cc_map.EVT_HEARTBEAT, cc_map.EVT_BUTTON_COMBO, cc_map.EVT_SENSOR_TRIGGER)
-_EVENT_NAMES = ("HeartBeat", "ButtonCombo", "SensorTrigger")
+# イベントフェーズ対象 opcode（確定イベントは Ping のみ・ARG 未使用）
+_EVENT_OPCODES = cc_map.EVENT_OPCODES
+_EVENT_NAMES = ("Ping",)
 
 
 class AutoSequencer:
@@ -64,11 +66,10 @@ class AutoSequencer:
         self._stick_step = stick_step
         self._button_hold_ticks = button_hold_ticks
         self._cc_step = cc_step
-        self._event_arg = 0  # サイクルをまたいで連続インクリメント（cycle reset では触らない）
         self._reset_cycle()
 
     def _reset_cycle(self) -> None:
-        """1 サイクル分のフェーズ状態を初期化する（event_arg は保持）。"""
+        """1 サイクル分のフェーズ状態を初期化する。"""
         self._phase = Phase.STICK
         self._axis_index = 0
         self._axis_value = cc_map.CENTER_14BIT
@@ -162,10 +163,8 @@ class AutoSequencer:
         if not self._event_sent:
             opcode = _EVENT_OPCODES[self._event_index]
             name = _EVENT_NAMES[self._event_index]
-            arg = self._event_arg
-            self._event_arg = (self._event_arg + 1) & cc_map.MAX_7BIT
             self._event_sent = True
-            return [SendAction(ActionKind.EVENT, opcode, arg, f"イベント送信 {name} arg={arg}")]
+            return [SendAction(ActionKind.EVENT, opcode, 0, f"イベント送信 {name}")]
         if event_pending:
             return []
         self._event_index += 1

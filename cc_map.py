@@ -14,19 +14,20 @@ AXIS_NAMES: tuple[str, ...] = ("左X", "左Y", "右X", "右Y")
 # 送信: ボタン 0–9
 BUTTON_CCS: tuple[int, ...] = tuple(range(20, 30))
 
-# 送信: 0–127 生値
-PRESET_CC = 40
-ERROR_CC = 41
-STATE_CC = 42
+# 送信: 0–127 生値（パラメータ帯 CC102–109・106–109 は予約）
+STATE_CC = 102
+MODE_CC = 103   # 動作モード通知（値体系は SetMode と共通）
+ERROR_CC = 104
+PRESET_CC = 105
 
-# コマンド/イベント I/F
-CMDRSP_STATUS_CC = 43   # 送信: 受信コマンドへの ACK (status + seqEcho)
-EVT_ARG_CC = 44         # 送信: イベント引数
-EVT_OP_CC = 45          # 送信: イベント opcode + seq (commit)
-CMD_ARG1_CC = 50        # 受信: コマンド第1引数
-CMD_OP_CC = 51          # 受信: コマンド opcode + seq (commit)
-EVTRSP_STATUS_CC = 52   # 受信: イベント送信への ACK (status + seqEcho)
-CMD_ARG2_CC = 53        # 受信: コマンド第2引数
+# コマンド/イベント I/F（CC110–119 帯・117–119 は予約）
+CMD_ARG1_CC = 110       # 受信: コマンド第1引数
+CMD_ARG2_CC = 111       # 受信: コマンド第2引数（現行確定 opcode ではすべて未使用）
+CMD_OP_CC = 112         # 受信: コマンド opcode + seq (commit)
+EVTRSP_STATUS_CC = 113  # 受信: イベント送信への ACK (status + seqEcho)
+CMDRSP_STATUS_CC = 114  # 送信: 受信コマンドへの ACK (status + seqEcho)
+EVT_ARG_CC = 115        # 送信: イベント引数（確定イベント Ping では未使用＝送信省略）
+EVT_OP_CC = 116         # 送信: イベント opcode + seq (commit)
 
 # --- 値域 ------------------------------------------------------------------
 CENTER_14BIT = 8192
@@ -44,16 +45,40 @@ STATUS_UNKNOWN_OP = 1
 STATUS_INVALID_ARG = 2
 STATUS_REJECTED = 3
 
-# --- コマンド opcode（受信側で解釈・bit0–5） -------------------------------
-CMD_PING = 0
-CMD_LED = 1
-CMD_HAPTIC = 2
-CMD_SET_PRESET = 4
+# --- opcode（コマンド/イベント共通番号空間・bit0–5） -----------------------
+# 各 opcode に方向（G→C / C→G / G⇄C）が定義され、方向で経路（コマンド/イベント）が決まる。
+OP_PING = 0        # G⇄C 双方向: 疎通確認
+OP_RESET = 1       # G→C: コントローラ再起動・初期化（ACK 送信後に実行）
+OP_SET_MODE = 2    # G→C: 動作モード切替（ACK 送信後に遷移・一方向）
+OP_SET_ZERO = 3    # G→C: センサ零点を現在値で設定
+OP_SET_PRESET = 4  # G→C: プリセット設定（arg1=preset / arg2 未使用）
+OP_SET_VALVE = 5   # G→C: バルブ開閉指示
+OPCODE_NAMES: dict[int, str] = {
+    OP_PING: "Ping",
+    OP_RESET: "Reset",
+    OP_SET_MODE: "SetMode",
+    OP_SET_ZERO: "SetZero",
+    OP_SET_PRESET: "SetPreset",
+    OP_SET_VALVE: "SetValve",
+}
 
-# --- イベント opcode（送信側・bit0–5） -------------------------------------
-EVT_HEARTBEAT = 0
-EVT_BUTTON_COMBO = 1
-EVT_SENSOR_TRIGGER = 2
+# イベント経路（Sim → Unity）で送信できる確定 opcode（方向が C→G または G⇄C のもの）
+EVENT_OPCODES: tuple[int, ...] = (OP_PING,)
+
+# --- Mode 値（CC103 通知と SetMode ARG1 で共通） ----------------------------
+MODE_NORMAL = 0
+MODE_VERSION_UP = 110
+MODE_FACTORY_INSPECTION = 127
+MODE_VALUES: tuple[int, ...] = (MODE_NORMAL, MODE_VERSION_UP, MODE_FACTORY_INSPECTION)
+MODE_NAMES: dict[int, str] = {
+    MODE_NORMAL: "通常",
+    MODE_VERSION_UP: "バージョンアップ",
+    MODE_FACTORY_INSPECTION: "出荷検査",
+}
+
+# --- SetValve ARG1 値 -------------------------------------------------------
+VALVE_OPEN = 0
+VALVE_CLOSE = 1
 
 
 def clamp(value: int, low: int, high: int) -> int:

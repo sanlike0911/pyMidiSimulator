@@ -47,7 +47,7 @@ class TestSeqCodec:
         assert cc_map.seq_of(value) == seq
 
     def test_pack_seq_known_values(self):
-        assert cc_map.pack_seq(cc_map.CMD_SET_PRESET, 1) == 4 + 64
+        assert cc_map.pack_seq(cc_map.OP_SET_PRESET, 1) == 4 + 64
         assert cc_map.pack_seq(0, 0) == 0
         assert cc_map.pack_seq(63, 1) == 127
 

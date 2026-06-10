@@ -2,10 +2,11 @@
 """MIDI Controller Simulator（コントローラ役・キーボード操作）。
 
 新 MIDI 仕様（docs/specs/midi-mapping.md）に対応。実機 MIDI コントローラの代わりに、
-キーボードから スティック / ボタン / Preset / Error / State を送信し、Unity が送る
-コマンド（SetPreset 等）を受信して ACK を返し、イベントを送信して応答を待つ。
+キーボードから スティック / ボタン / State / Error / Preset を送信し、Unity が送る
+コマンド（Ping/Reset/SetMode/SetZero/SetPreset/SetValve）を受信して ACK を返し、
+イベント（Ping）を送信して応答を待つ。
 
-設計: docs/superpowers/specs/2026-06-09-controller-sim-new-midi-spec-design.md
+設計: docs/superpowers/specs/2026-06-10-cc-band-and-opcode-redesign-design.md
 """
 from __future__ import annotations
 
@@ -19,12 +20,13 @@ import cc_map
 import keyboard_map
 import midi_io as midi_io_mod
 from auto_sequencer import ActionKind, AutoSequencer, SendAction
+from controller_state import ControllerState
 from messaging import Messaging, MessagingState
 
 TICK_INTERVAL = 1.0 / 60.0
 # 押下中ランプの 1 Tick あたりの 14bit 変化量（約 0.5 秒でフルスケール）
 STICK_STEP_PER_TICK = 550
-# 軸の中心点（初期値・"0" キー・自動モード遷移時の移動先）
+# 軸の中心点（初期値・"R" キー・自動モード遷移時の移動先）
 AXIS_CENTER = cc_map.CENTER_14BIT
 # --- 自動デバッグ入力モードのパラメータ ---
 AUTO_STICK_STEP = 550        # スティックスイープの 1 Tick あたり 14bit 変化量
@@ -63,7 +65,18 @@ class ControllerSimulator:
 
     def __init__(self) -> None:
         self._midi = midi_io_mod.MidiIO()
-        self._messaging = Messaging(self._midi.send_cc)
+        # パラメータ現在値とコマンド validate/execute はアプリ層（ControllerState）が担い、
+        # messaging はフレーミング・ACK・seq・タイムアウトのみ担う（プロトコル層）。
+        self._params = ControllerState(
+            send_cc=self._midi.send_cc,
+            on_reset=self._on_controller_reset,
+            on_log=print,
+        )
+        self._messaging = Messaging(
+            self._midi.send_cc,
+            self._params.validate_command,
+            self._params.execute_command,
+        )
         self._lock = threading.Lock()  # MIDI 出力と messaging を直列化（受信は別スレッド）
         self._running = True
 
@@ -71,10 +84,6 @@ class ControllerSimulator:
         self._axis_sent: List[int] = [-1] * 4  # -1 = 未送信（初回必ず送る）
 
         self._buttons = [False] * len(cc_map.BUTTON_CCS)
-        self._preset = 0
-        self._error = 0
-        self._state = 0
-        self._event_arg = 0
 
         self._help_requested = False
         self._auto_mode = False
@@ -90,6 +99,8 @@ class ControllerSimulator:
             print("=" * 56)
             if not self._setup_ports():
                 return
+            # 仕様 §3: コントローラは接続直後に各パラメータの現在値を初期通知する
+            self._params.notify_initial()
             self._init_window()
             print(keyboard_map.help_text())
             print("-" * 56)
@@ -120,11 +131,8 @@ class ControllerSimulator:
         if in_idx is None:
             print("MIDI 入力なし: コマンド受信／イベント応答は無効です（送信のみ）")
             return True
-        if in_ports[in_idx] == out_ports[out_idx]:
-            print(
-                "⚠ 警告: 入力と出力が同一ポートです。自分が送る右スティック LSB(CC50/51) 等が\n"
-                "  コマンドとして自プロセスへ誤注入される恐れがあります。IN/OUT は別ポート推奨。"
-            )
+        # 新仕様は IN/OUT で CC 番号の重複なし（自己エコーが受信処理対象 CC110–113 に
+        # 入ることはない）ため、同一ポート選択の警告は不要。
         self._midi.open_input(in_idx, self._on_cc_received)
         print(f"入力ポート '{in_ports[in_idx]}' に接続しました")
         return True
@@ -205,17 +213,11 @@ class ControllerSimulator:
             self._midi.send_cc(cc_map.BUTTON_CCS[idx], 127)
             print(f"ボタン{idx}: ON")
         elif key in keyboard_map.PRESET_KEYS:
-            self._preset = cc_map.clamp(self._preset + keyboard_map.PRESET_KEYS[key], 0, cc_map.MAX_7BIT)
-            self._midi.send_cc(cc_map.PRESET_CC, self._preset)
-            print(f"Preset 送信: {self._preset}")
+            self._params.adjust_preset(keyboard_map.PRESET_KEYS[key])
         elif key in keyboard_map.ERROR_KEYS:
-            self._error = cc_map.clamp(self._error + keyboard_map.ERROR_KEYS[key], 0, cc_map.MAX_7BIT)
-            self._midi.send_cc(cc_map.ERROR_CC, self._error)
-            print(f"Error 送信: {self._error}")
+            self._params.adjust_error(keyboard_map.ERROR_KEYS[key])
         elif key in keyboard_map.STATE_KEYS:
-            self._state = cc_map.clamp(self._state + keyboard_map.STATE_KEYS[key], 0, cc_map.MAX_7BIT)
-            self._midi.send_cc(cc_map.STATE_CC, self._state)
-            print(f"State 送信: {self._state}")
+            self._params.adjust_state(keyboard_map.STATE_KEYS[key])
         elif key in keyboard_map.EVENT_KEYS:
             self._send_event(keyboard_map.EVENT_KEYS[key])
         elif key == keyboard_map.AXIS_RESET_KEY:
@@ -240,11 +242,10 @@ class ControllerSimulator:
             self._log_axis(keyboard_map.AXIS_KEYS[key][0])
 
     def _send_event(self, opcode: int) -> None:
-        """イベントを送信する（arg は送信ごとに増えるカウンタ）。"""
-        arg = self._event_arg
-        self._event_arg = (self._event_arg + 1) & 0x7F
-        if self._messaging.send_event(opcode, arg):
-            print(f"イベント送信: op={opcode} arg={arg}")
+        """イベントを送信する（確定イベント Ping は ARG 未使用のため送信省略）。"""
+        if self._messaging.send_event(opcode):
+            name = cc_map.OPCODE_NAMES.get(opcode, "?")
+            print(f"イベント送信: {name}(op={opcode})")
         else:
             print("イベント送信を抑止: 前のイベントが応答待ちです")
 
@@ -299,21 +300,12 @@ class ControllerSimulator:
             self._buttons[action.target] = action.value > 0
             self._midi.send_cc(cc_map.BUTTON_CCS[action.target], action.value)
         elif action.kind is ActionKind.SCALAR:
-            self._sync_scalar(action.target, action.value)
-            self._midi.send_cc(action.target, action.value)
+            # ControllerState 経由で送信し、手動復帰時の内部状態整合と変化検出を保つ
+            self._params.set_scalar(action.target, action.value)
         elif action.kind is ActionKind.EVENT:
-            self._messaging.send_event(action.target, action.value)
+            self._messaging.send_event(action.target)
         if action.log:
             print(f"[AUTO] {action.log}")
-
-    def _sync_scalar(self, cc: int, value: int) -> None:
-        """自動送信したスカラー値を内部状態へ反映し、手動復帰時の整合を保つ。"""
-        if cc == cc_map.PRESET_CC:
-            self._preset = value
-        elif cc == cc_map.ERROR_CC:
-            self._error = value
-        elif cc == cc_map.STATE_CC:
-            self._state = value
 
     def _center_axes(self) -> None:
         """全軸を中心点(8192)へ移動して送信する。"""
@@ -336,19 +328,25 @@ class ControllerSimulator:
         with self._lock:
             self._messaging.handle_incoming_cc(cc, value)
 
+    def _on_controller_reset(self) -> None:
+        """Reset コマンド実行時の外部状態初期化（ControllerState から呼ばれる）。
+
+        パラメータの初期化と再初期通知は ControllerState 側が行う。ここでは
+        イベント保留の破棄と物理層シミュレーション（ボタン・軸）の初期化を行う。
+        """
+        self._messaging.clear_pending()
+        self._all_buttons_off()
+        self._center_axes()
+
     def _log_incoming_changes(self, snapshot: MessagingState) -> None:
         """受信コマンド・イベント応答が更新されていればログ出力する。"""
         if snapshot.last_command is not None and snapshot.last_command is not self._prev_command:
             cmd = snapshot.last_command
+            name = cc_map.OPCODE_NAMES.get(cmd.opcode, "未知")
             print(
-                f"[受信コマンド] op={cmd.opcode} arg1={cmd.arg1} arg2={cmd.arg2}"
+                f"[受信コマンド] {name}(op={cmd.opcode}) arg1={cmd.arg1} arg2={cmd.arg2}"
                 f" -> status={cmd.status} (seqEcho={cmd.seq})"
             )
-            # SetPreset(OK) 受信時は送信用 Preset も受信値へ同期する。
-            # これにより以降の ]/[ が受信した Preset を基準に増減し、送信用と受信値の二重管理を防ぐ。
-            if cmd.opcode == cc_map.CMD_SET_PRESET and cmd.status == cc_map.STATUS_OK:
-                self._preset = cmd.arg1
-                print(f"  → 送信用 Preset を {self._preset} に同期")
             self._prev_command = snapshot.last_command
         response = snapshot.last_event_response
         if response is not None and response is not self._prev_event_response:

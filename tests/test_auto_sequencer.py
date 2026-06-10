@@ -115,11 +115,11 @@ class TestButtonPhase:
 
 
 class TestScalarPhase:
-    def test_sweeps_preset_error_state_in_order(self):
+    def test_sweeps_state_error_preset_in_cc_order(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
         _advance_to_phase(seq, Phase.SCALAR)
 
-        by_cc = {cc_map.PRESET_CC: [], cc_map.ERROR_CC: [], cc_map.STATE_CC: []}
+        by_cc = {cc_map.STATE_CC: [], cc_map.ERROR_CC: [], cc_map.PRESET_CC: []}
         order = []
         for _ in range(300):
             if seq._phase is not Phase.SCALAR:
@@ -130,22 +130,34 @@ class TestScalarPhase:
                     if a.target not in order:
                         order.append(a.target)
 
-        # Preset(40) → Error(41) → State(42) の順で処理される
-        assert order == [cc_map.PRESET_CC, cc_map.ERROR_CC, cc_map.STATE_CC]
+        # State(102) → Error(104) → Preset(105) の CC 昇順で処理される
+        assert order == [cc_map.STATE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC]
         # 各スカラーは 0 から始まり 127 で終わる
-        for cc in (cc_map.PRESET_CC, cc_map.ERROR_CC, cc_map.STATE_CC):
+        for cc in (cc_map.STATE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC):
             assert by_cc[cc][0] == 0
             assert by_cc[cc][-1] == cc_map.MAX_7BIT
             assert max(by_cc[cc]) == cc_map.MAX_7BIT  # 127 を超えない
 
-    def test_enters_event_phase_after_state(self):
+    def test_mode_cc_is_not_swept(self):
+        # Mode(CC103) は動作モード通知のため巡回対象外（設計書 §7: 誤認防止）
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
+        _advance_to_phase(seq, Phase.SCALAR)
+        for _ in range(300):
+            if seq._phase is not Phase.SCALAR:
+                break
+            for a in seq.tick(event_pending=False):
+                if a.kind is ActionKind.SCALAR:
+                    assert a.target != cc_map.MODE_CC
+
+    def test_enters_event_phase_after_preset(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
         _advance_to_phase(seq, Phase.EVENT)
         assert seq._phase is Phase.EVENT
 
 
 class TestEventPhase:
-    def test_sends_three_events_in_order_waiting_for_response(self):
+    def test_sends_single_ping_waiting_for_response(self):
+        # 確定イベントは Ping のみ（仕様: 方向 C→G / G⇄C の opcode は Ping だけ）
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
         _advance_to_phase(seq, Phase.EVENT)
 
@@ -162,7 +174,7 @@ class TestEventPhase:
             if seq._phase is Phase.STICK:
                 break
 
-        assert sent == [cc_map.EVT_HEARTBEAT, cc_map.EVT_BUTTON_COMBO, cc_map.EVT_SENSOR_TRIGGER]
+        assert sent == [cc_map.OP_PING]
 
     def test_does_not_advance_while_event_pending(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
@@ -171,22 +183,6 @@ class TestEventPhase:
         assert first[0].kind is ActionKind.EVENT
         assert seq.tick(event_pending=True) == []
         assert seq.tick(event_pending=True) == []
-
-    def test_event_arg_increments_across_sends(self):
-        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
-        _advance_to_phase(seq, Phase.EVENT)
-        a1 = seq.tick(event_pending=False)[0]
-        seq.tick(event_pending=False)
-        a2 = seq.tick(event_pending=False)[0]
-        assert a2.value == (a1.value + 1) & cc_map.MAX_7BIT
-
-    def test_event_arg_wraps_at_max(self):
-        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
-        _advance_to_phase(seq, Phase.EVENT)
-        seq._event_arg = cc_map.MAX_7BIT  # 127
-        action = seq.tick(event_pending=False)[0]
-        assert action.value == cc_map.MAX_7BIT   # 127 を送信
-        assert seq._event_arg == 0               # 次送信用に 0 へラップ
 
     def test_completing_event_phase_loops_back_to_stick(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=127)
