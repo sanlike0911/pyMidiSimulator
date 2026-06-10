@@ -115,10 +115,14 @@ class TestButtonPhase:
 
 
 def _collect_scalar_actions(seq: AutoSequencer) -> tuple[dict, list]:
-    """SCALAR フェーズの全アクションを (CC別値列, CC出現順) で収集する。"""
+    """SCALAR フェーズの全アクションを (CC別値列, CC出現順) で収集する。
+
+    上限 500 Tick はテスト用 cc_step=64 での所要（スイープ 3 値×3 CC + Mode 3 値 ≈ 12 Tick）
+    に対し十分大きく、cc_step=1 相当（約 390 Tick）でも完走できる値。
+    """
     by_cc: dict = {}
     order: list = []
-    for _ in range(300):
+    for _ in range(500):
         if seq._phase is not Phase.SCALAR:
             break
         for a in seq.tick(event_pending=False):

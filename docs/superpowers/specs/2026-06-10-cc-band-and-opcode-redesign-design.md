@@ -297,5 +297,8 @@ self._messaging = Messaging(self._midi.send_cc,
   非通常モードのまま巡回を終える誤認を防ぐ）。Mode の送信は全件モード名付きでログする。
 - `ControllerState.set_scalar` は `MODE_CC` も扱う（変化時のみ送信・内部 mode 同期。
   これにより自動巡回中も SetMode の REJECTED 判定が実状態と整合する）。
+  なお `B` キーで mode=110 にした直後に自動モードを開始すると、巡回先頭の 110 は
+  「変化なし」として送信されない（仕様 §3 の送信契機に忠実な挙動。110 自体は
+  B キー押下時に送信済みのため受信側の取りこぼしは生じない）。
 - `AutoSequencer._tick_scalar` は「CC ごとの送信値列」（Mode=3 値・他=0〜127 スイープ）に
   一般化した（送信タイミング・他 CC の値列は従来と同一）。

@@ -148,7 +148,7 @@ class AutoSequencer:
             return [SendAction(ActionKind.BUTTON, idx, 0, f"ボタン{idx} OFF")]
         return []
 
-    def _scalar_values(self, cc: int) -> tuple:
+    def _scalar_values(self, cc: int) -> tuple[int, ...]:
         """スカラー CC ごとの送信値列を返す。
 
         Mode は有効 3 値のみ（最後に通常へ復帰）、その他は 0 から cc_step 刻みで
