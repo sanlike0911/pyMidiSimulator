@@ -24,7 +24,7 @@ from messaging import Messaging, MessagingState
 TICK_INTERVAL = 1.0 / 60.0
 # 押下中ランプの 1 Tick あたりの 14bit 変化量（約 0.5 秒でフルスケール）
 STICK_STEP_PER_TICK = 550
-# 軸の中心点（初期値・"0" キー・自動モード遷移時の移動先）
+# 軸の中心点（初期値・"R" キー・自動モード遷移時の移動先）
 AXIS_CENTER = cc_map.CENTER_14BIT
 # --- 自動デバッグ入力モードのパラメータ ---
 AUTO_STICK_STEP = 550        # スティックスイープの 1 Tick あたり 14bit 変化量
@@ -123,7 +123,7 @@ class ControllerSimulator:
         if in_ports[in_idx] == out_ports[out_idx]:
             print(
                 "⚠ 警告: 入力と出力が同一ポートです。自分が送る右スティック LSB(CC50/51) 等が\n"
-                "  コマンドとして自プロセスへ誤注入される恐れがあります。IN/OUT は別ポート推奨。"
+                "  コマンド引数(CMD_ARG1/ARG2)として自プロセスへ誤注入される恐れがあります。IN/OUT は別ポート推奨。"
             )
         self._midi.open_input(in_idx, self._on_cc_received)
         print(f"入力ポート '{in_ports[in_idx]}' に接続しました")

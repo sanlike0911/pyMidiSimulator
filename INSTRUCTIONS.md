@@ -6,8 +6,10 @@
 
 キーボード操作で **MIDI コントローラ役（送信主体）** を演じ、Unity 側 `CkdGameController`（受信側）に対して新 MIDI 仕様の Control Change を送受信する Python シミュレータです。実機 MIDI コントローラやゲームパッドが無くても、スティック / ボタン / Preset / Error / State の送信、コマンド受信＋ACK、イベント送信＋応答待ちを検証できます。
 
-- 対象 MIDI 仕様: `docs/specs/midi-mapping.md`（Unity 受信側の視点で記述）
+- 対象 MIDI 仕様: `docs/specs/midi-mapping.md`（ゲーム＝Unity 側の視点で IN/OUT を記述）
 - 設計書: `docs/superpowers/specs/2026-06-09-controller-sim-new-midi-spec-design.md`
+
+> **仕様書の同期運用:** `docs/specs/midi-mapping.md` は**別プロジェクト（Unity / コントローラ側）で更新され、本リポジトリへそのままコピーされる外部正典**。本ファイルには pyMidiSimulator 固有の注記を書き込まない（上書きで消えるため）。仕様書を更新したら `pytest` を実行すること — `tests/test_spec_sync.py` が仕様書の CC 早見表・コード値（STATUS / opcode）・規約値（しきい値 / seq ビット / タイムアウト）をパースして実装定数（`cc_map` / `messaging`）と照合し、実装の追従漏れを検出する。
 
 > **重要な視点:** 仕様書は Unity（受信側）の視点で「IN / OUT」を定義しています。本シミュレータはコントローラ役なので**送受信が反転**します（仕様の「IN」= 本アプリの送信、「OUT」= 本アプリの受信）。
 
@@ -21,7 +23,7 @@
 - **`messaging.py`** - コマンド/イベント I/F ステートマシン（受信コマンド→ACK、イベント送信→応答待ち、seq、タイムアウト）。`send_cc` の注入と `tick()` 駆動で動作。
 - **`midi_io.py`** - python-rtmidi のラッパー（ポート列挙・7bit/14bit CC 送信・受信ディスパッチ）。
 - **`keyboard_map.py`** - pygame キー → セマンティックアクションのマッピングとヘルプテキスト。
-- **`tests/`** - pytest（`cc_map` / `messaging` / `auto_sequencer` の純粋ロジックを網羅）。
+- **`tests/`** - pytest（`cc_map` / `messaging` / `auto_sequencer` の純粋ロジックを網羅）。`test_spec_sync.py` は仕様書 `docs/specs/midi-mapping.md` と実装定数の同期を検証する。
 - **`setup.py`** - 依存確認・インストール・起動を行う補助スクリプト。
 
 ### 送受信 CC（コントローラ役視点）
@@ -34,14 +36,14 @@
 - イベント: EVT_ARG=CC#44 / EVT_OP=CC#45
 
 **受信（Unity → Sim / 仕様表の「OUT」）**
-- コマンド: CMD_ARG1=CC#50 / CMD_ARG2=CC#53 / CMD_OP=CC#51（commit）
-- EVTRSP_STATUS: CC#52（イベント送信への ACK）
+- コマンド: CMD_ARG1=CC#50 / CMD_ARG2=CC#51 / CMD_OP=CC#52（commit）
+- EVTRSP_STATUS: CC#53（イベント送信への ACK）
 
-> ⚠️ **CC 番号衝突:** 送信側の右スティック X/Y の LSB（CC#50/51）と、受信側の CMD_ARG1/CMD_OP（CC#50/51）が同番号。MIDI は IN/OUT が独立エンドポイントのため実機（物理 IN/OUT 分離）では無害だが、**単一仮想ポート/ループバックでは自分の送信が誤注入される**。IN/OUT は別ポートにすること（同一選択時は警告）。
+> ⚠️ **CC 番号衝突:** 送信側の右スティック X/Y の LSB（CC#50/51）と、受信側の CMD_ARG1/CMD_ARG2（CC#50/51）が同番号。MIDI は IN/OUT が独立エンドポイントのため実機（物理 IN/OUT 分離）では無害だが、**単一仮想ポート/ループバックでは自分の送信が誤注入される**。IN/OUT は別ポートにすること（同一選択時は警告）。
 
 ### スティック解釈（中心点固定）
 
-スティック軸（CC 16/48・17/49・18/50・19/51）は中心点 8192 を基準とする双極値（-1.0 … +1.0）として扱う。`0` キーで全軸を中心点 8192 へ移動できる。表示は `norm14_bipolar` による双極正規化。
+スティック軸（CC 16/48・17/49・18/50・19/51）は中心点 8192 を基準とする双極値（-1.0 … +1.0）として扱う。`R` キーで全軸を中心点 8192 へ移動できる。表示は `norm14_bipolar` による双極正規化。
 
 > 旧 Stick/Slider モード切替は撤廃済み（送信バイト列に影響せず、原点と表示正規化のみを変えるため）。経緯は [docs/superpowers/specs/2026-06-09-auto-debug-input-mode-design.md](docs/superpowers/specs/2026-06-09-auto-debug-input-mode-design.md) を参照。
 
@@ -119,9 +121,10 @@ pytest
 
 | キー | 動作 |
 | --- | --- |
-| `1`/`2` `3`/`4` `5`/`6` `7`/`8` | 左X / 左Y / 右X / 右Y の +/−（押下中ランプ） |
-| `0` | 全軸を中心点へ移動（8192） |
-| `Q W E F T Y U I O P` | ボタン 0–9（押下=ON / 離上=OFF） |
+| `W`/`A`/`S`/`D` | 左スティック 上/左/下/右（十字操作・押下中ランプ） |
+| `↑`/`←`/`↓`/`→` | 右スティック 上/左/下/右（十字操作・押下中ランプ） |
+| `R` | 全軸を中心点へ移動（8192） |
+| `1 2 3 4 5 6 7 8 9 0` | ボタン 0–9（押下=ON / 離上=OFF） |
 | `]`/`[` | Preset +1/−1（CC40） |
 | `X`/`Z` | Error +1/−1（CC41） |
 | `V`/`C` | State +1/−1（CC42） |

@@ -35,8 +35,8 @@
 
 仕様書セクション7に準拠（seq=bit6、ACK、タイムアウト、応答待ちステートマシン）。
 
-- **コマンド受信**（Unity → 本アプリ）: `CMD_ARG1`=CC#50 / `CMD_ARG2`=CC#53 / `CMD_OP`=CC#51 を受信し、`CMDRSP_STATUS`=CC#43 で即 ACK。SetPreset(op4) は内部 Preset を更新。
-- **イベント送信**（本アプリ → Unity）: `EVT_ARG`=CC#44 / `EVT_OP`=CC#45 を送信し、`EVTRSP_STATUS`=CC#52 で応答を受信。
+- **コマンド受信**（Unity → 本アプリ）: `CMD_ARG1`=CC#50 / `CMD_ARG2`=CC#51 / `CMD_OP`=CC#52 を受信し、`CMDRSP_STATUS`=CC#43 で即 ACK。SetPreset(op4) は内部 Preset を更新。
+- **イベント送信**（本アプリ → Unity）: `EVT_ARG`=CC#44 / `EVT_OP`=CC#45 を送信し、`EVTRSP_STATUS`=CC#53 で応答を受信。
 
 ## インストールと実行
 
@@ -82,14 +82,15 @@ pytest
 
 | キー | 動作 |
 |------|------|
-| `1`/`2` `3`/`4` `5`/`6` `7`/`8` | 左X / 左Y / 右X / 右Y の +/−（押下中ランプ） |
-| `0` | 全軸を原点へ（Stick=8192 / Slider=0） |
-| `Q W E F T Y U I O P` | ボタン 0–9（押下=ON / 離上=OFF） |
+| `W`/`A`/`S`/`D` | 左スティック 上/左/下/右（十字操作・押下中ランプ） |
+| `↑`/`←`/`↓`/`→` | 右スティック 上/左/下/右（十字操作・押下中ランプ） |
+| `R` | 全軸を中心点へ移動（8192） |
+| `1 2 3 4 5 6 7 8 9 0` | ボタン 0–9（押下=ON / 離上=OFF） |
 | `]`/`[` | Preset +1/−1（CC40） |
 | `X`/`Z` | Error +1/−1（CC41） |
 | `V`/`C` | State +1/−1（CC42） |
 | `G` / `B` / `N` | イベント送信 HeartBeat / ButtonCombo / SensorTrigger |
-| `M` | Stick ⇔ Slider 切替（軸を原点リセット） |
+| `M` | 自動デバッグ入力モード ON/OFF（全要素を巡回送信） |
 | `/` | ヘルプ再表示 ／ `ESC` 終了 |
 
 > コマンド（SetPreset 等）は Unity から受信し自動で ACK します（キー操作不要）。
@@ -137,7 +138,7 @@ pytest
 4. Unity / DAW 側では「Sim Out」を入力、「Sim In」を出力として設定
 
 > **同一ポートの注意:** 出力と入力に同じポートを選ぶと、自分が送る右スティック LSB（CC#50/51）が
-> コマンド（CMD_ARG1/CMD_OP）として自プロセスへ誤注入される恐れがあります（起動時に警告）。IN/OUT は別ポート推奨。
+> コマンド引数（CMD_ARG1/CMD_ARG2）として自プロセスへ誤注入される恐れがあります（起動時に警告）。IN/OUT は別ポート推奨。
 
 ### DAW での設定例
 
@@ -182,9 +183,9 @@ pytest
 | 40 / 41 / 42 | Preset / Error / State（0–127） | 送信 |
 | 43 | CMDRSP_STATUS（コマンド ACK） | 送信 |
 | 44 / 45 | EVT_ARG / EVT_OP（イベント） | 送信 |
-| 50 / 53 | CMD_ARG1 / CMD_ARG2 | 受信 |
-| 51 | CMD_OP（commit） | 受信 |
-| 52 | EVTRSP_STATUS（イベント ACK） | 受信 |
+| 50 / 51 | CMD_ARG1 / CMD_ARG2 | 受信 |
+| 52 | CMD_OP（commit） | 受信 |
+| 53 | EVTRSP_STATUS（イベント ACK） | 受信 |
 
 ## 実行例
 

@@ -24,9 +24,9 @@ CMDRSP_STATUS_CC = 43   # 送信: 受信コマンドへの ACK (status + seqEcho
 EVT_ARG_CC = 44         # 送信: イベント引数
 EVT_OP_CC = 45          # 送信: イベント opcode + seq (commit)
 CMD_ARG1_CC = 50        # 受信: コマンド第1引数
-CMD_OP_CC = 51          # 受信: コマンド opcode + seq (commit)
-EVTRSP_STATUS_CC = 52   # 受信: イベント送信への ACK (status + seqEcho)
-CMD_ARG2_CC = 53        # 受信: コマンド第2引数
+CMD_ARG2_CC = 51        # 受信: コマンド第2引数
+CMD_OP_CC = 52          # 受信: コマンド opcode + seq (commit)
+EVTRSP_STATUS_CC = 53   # 受信: イベント送信への ACK (status + seqEcho)
 
 # --- 値域 ------------------------------------------------------------------
 CENTER_14BIT = 8192
