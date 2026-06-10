@@ -79,11 +79,15 @@ class TestSetScalar:
     def test_set_scalar_handles_each_scalar_cc(self):
         cs, s, _r, _l = make()
         cs.set_scalar(cc_map.STATE_CC, 10)
+        cs.set_scalar(cc_map.MODE_CC, cc_map.MODE_VERSION_UP)
         cs.set_scalar(cc_map.ERROR_CC, 20)
         cs.set_scalar(cc_map.PRESET_CC, 30)
-        assert (cs.state, cs.error, cs.preset) == (10, 20, 30)
+        assert (cs.state, cs.mode, cs.error, cs.preset) == (
+            10, cc_map.MODE_VERSION_UP, 20, 30
+        )
         assert s.sent == [
             (cc_map.STATE_CC, 10),
+            (cc_map.MODE_CC, cc_map.MODE_VERSION_UP),
             (cc_map.ERROR_CC, 20),
             (cc_map.PRESET_CC, 30),
         ]
@@ -91,13 +95,42 @@ class TestSetScalar:
     def test_set_scalar_skips_unchanged_value(self):
         cs, s, _r, _l = make()
         cs.set_scalar(cc_map.STATE_CC, 0)  # 初期値と同値
+        cs.set_scalar(cc_map.MODE_CC, cc_map.MODE_NORMAL)  # 初期値と同値
         assert s.sent == []
 
     def test_set_scalar_ignores_unrelated_cc(self):
         cs, s, _r, _l = make()
-        cs.set_scalar(cc_map.MODE_CC, 110)  # Mode は自動巡回対象外（設計書 §7）
-        assert cs.mode == cc_map.MODE_NORMAL
+        cs.set_scalar(cc_map.BUTTON_CCS[0], 64)  # パラメータ帯以外の CC は対象外
         assert s.sent == []
+
+
+class TestCycleMode:
+    def test_cycle_mode_cycles_through_valid_values(self):
+        # 手動デバッグ用: 通常(0) → バージョンアップ(110) → 出荷検査(127) → 通常(0) と巡回
+        cs, s, _r, _l = make()
+        assert cs.cycle_mode() == cc_map.MODE_VERSION_UP
+        assert cs.cycle_mode() == cc_map.MODE_FACTORY_INSPECTION
+        assert cs.cycle_mode() == cc_map.MODE_NORMAL
+        assert s.sent == [
+            (cc_map.MODE_CC, cc_map.MODE_VERSION_UP),
+            (cc_map.MODE_CC, cc_map.MODE_FACTORY_INSPECTION),
+            (cc_map.MODE_CC, cc_map.MODE_NORMAL),
+        ]
+
+    def test_cycle_mode_logs_mode_name(self):
+        cs, _s, _r, logs = make()
+        cs.cycle_mode()
+        assert any("バージョンアップ" in log for log in logs)
+
+    def test_set_mode_rejected_after_manual_cycle(self):
+        # 手動巡回で非通常モードへ移った状態は実機のモード遷移後と同じ扱いになり、
+        # SetMode コマンドは一方向遷移の制約で REJECTED になる（デバッグ用途）。
+        cs, _s, _r, _l = make()
+        cs.cycle_mode()  # -> バージョンアップ(110)
+        assert (
+            cs.validate_command(cc_map.OP_SET_MODE, cc_map.MODE_NORMAL, 0)
+            == cc_map.STATUS_REJECTED
+        )
 
 
 class TestValidate:

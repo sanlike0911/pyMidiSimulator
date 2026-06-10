@@ -92,13 +92,30 @@ class ControllerState:
         """自動デバッグ入力からのスカラー設定。変化時のみ送信し内部状態を同期する。"""
         if cc == cc_map.STATE_CC and value != self._state:
             self._state = value
+        elif cc == cc_map.MODE_CC and value != self._mode:
+            self._mode = value
         elif cc == cc_map.ERROR_CC and value != self._error:
             self._error = value
         elif cc == cc_map.PRESET_CC and value != self._preset:
             self._preset = value
         else:
-            return  # 対象外 CC（Mode 含む）または変化なし -> 送信しない
+            return  # 対象外 CC または変化なし -> 送信しない
         self._send_cc(cc, value)
+
+    def cycle_mode(self) -> int:
+        """Mode を有効値の並び（通常→バージョンアップ→出荷検査→通常）で巡回し CC103 を送信する。
+
+        手動デバッグ用に「コントローラ自身のモード遷移」を模擬する。SetMode コマンドの
+        一方向遷移はゲーム側からの制約であり、本キー操作はその制約を受けずに巡回できる
+        （非通常モード中に SetMode が REJECTED になる状況も本操作で再現できる）。
+        """
+        current = self._mode if self._mode in cc_map.MODE_VALUES else cc_map.MODE_NORMAL
+        idx = cc_map.MODE_VALUES.index(current)
+        new = cc_map.MODE_VALUES[(idx + 1) % len(cc_map.MODE_VALUES)]
+        self._mode = new
+        self._send_cc(cc_map.MODE_CC, new)
+        self._on_log(f"Mode 送信: {new}（{cc_map.MODE_NAMES[new]}）")
+        return new
 
     # --- コマンド処理（messaging から注入呼び出し） --------------------------
     def validate_command(self, opcode: int, arg1: int, _arg2: int) -> int:

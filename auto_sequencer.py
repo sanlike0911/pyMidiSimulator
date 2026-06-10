@@ -48,11 +48,16 @@ class _Leg(Enum):
     TO_CENTER = 2   # 下端 0 → 中心 8192（到達で軸完了）
 
 
-# スカラーフェーズ対象（State, Error, Preset — CC 昇順）。
-# Mode(CC103) は「現在の動作モード」の通知であり、巡回送信すると受信側が実際の
-# モード遷移と誤認しうるため対象外（通知は SetMode 起点と初期通知に限定する）。
-_SCALAR_CCS = (cc_map.STATE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC)
-_SCALAR_NAMES = ("State", "Error", "Preset")
+# スカラーフェーズ対象（State, Mode, Error, Preset — CC 昇順）。
+# Mode(CC103) は 0–127 スイープではなく有効 3 値（110→127→0）のみを送り、最後に
+# 必ず通常(0)へ復帰する（無効値の大量送信と、非通常モードのまま終わる誤認を防ぐ）。
+_SCALAR_CCS = (cc_map.STATE_CC, cc_map.MODE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC)
+_SCALAR_NAMES = ("State", "Mode", "Error", "Preset")
+_MODE_SEQUENCE = (
+    cc_map.MODE_VERSION_UP,
+    cc_map.MODE_FACTORY_INSPECTION,
+    cc_map.MODE_NORMAL,
+)
 
 # イベントフェーズ対象 opcode（確定イベントは Ping のみ・ARG 未使用）
 _EVENT_OPCODES = cc_map.EVENT_OPCODES
@@ -78,7 +83,7 @@ class AutoSequencer:
         self._button_on = False
         self._hold_counter = 0
         self._scalar_index = 0
-        self._scalar_value = 0
+        self._scalar_step = 0
         self._event_index = 0
         self._event_sent = False
 
@@ -143,20 +148,34 @@ class AutoSequencer:
             return [SendAction(ActionKind.BUTTON, idx, 0, f"ボタン{idx} OFF")]
         return []
 
+    def _scalar_values(self, cc: int) -> tuple:
+        """スカラー CC ごとの送信値列を返す。
+
+        Mode は有効 3 値のみ（最後に通常へ復帰）、その他は 0 から cc_step 刻みで
+        127 までのスイープ。
+        """
+        if cc == cc_map.MODE_CC:
+            return _MODE_SEQUENCE
+        return tuple(range(0, cc_map.MAX_7BIT, self._cc_step)) + (cc_map.MAX_7BIT,)
+
     def _tick_scalar(self) -> List[SendAction]:
         cc = _SCALAR_CCS[self._scalar_index]
         name = _SCALAR_NAMES[self._scalar_index]
-        value = min(self._scalar_value, cc_map.MAX_7BIT)
-        log = f"{name} = {value}" if value in (0, cc_map.MAX_7BIT) else None
+        values = self._scalar_values(cc)
+        value = values[self._scalar_step]
+        if cc == cc_map.MODE_CC:
+            # Mode は値の意味が重要なため全送信をモード名付きでログする
+            log = f"{name} = {value}（{cc_map.MODE_NAMES[value]}）"
+        else:
+            log = f"{name} = {value}" if value in (0, cc_map.MAX_7BIT) else None
         action = SendAction(ActionKind.SCALAR, cc, value, log)
-        if self._scalar_value >= cc_map.MAX_7BIT:
+        self._scalar_step += 1
+        if self._scalar_step >= len(values):
+            self._scalar_step = 0
             self._scalar_index += 1
-            self._scalar_value = 0
             if self._scalar_index >= len(_SCALAR_CCS):
                 self._scalar_index = 0
                 self._phase = Phase.EVENT
-        else:
-            self._scalar_value += self._cc_step
         return [action]
 
     def _tick_event(self, event_pending: bool) -> List[SendAction]:

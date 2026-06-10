@@ -218,6 +218,8 @@ class ControllerSimulator:
             self._params.adjust_error(keyboard_map.ERROR_KEYS[key])
         elif key in keyboard_map.STATE_KEYS:
             self._params.adjust_state(keyboard_map.STATE_KEYS[key])
+        elif key == keyboard_map.MODE_CYCLE_KEY:
+            self._params.cycle_mode()
         elif key in keyboard_map.EVENT_KEYS:
             self._send_event(keyboard_map.EVENT_KEYS[key])
         elif key == keyboard_map.AXIS_RESET_KEY:
