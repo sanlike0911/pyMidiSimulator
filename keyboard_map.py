@@ -35,6 +35,9 @@ PRESET_KEYS: Dict[int, int] = {pygame.K_RIGHTBRACKET: +1, pygame.K_LEFTBRACKET: 
 ERROR_KEYS: Dict[int, int] = {pygame.K_x: +1, pygame.K_z: -1}
 STATE_KEYS: Dict[int, int] = {pygame.K_v: +1, pygame.K_c: -1}
 
+# Mode 巡回（KEYDOWN）: 通常(0)→バージョンアップ(110)→出荷検査(127)→通常(0)…（CC103）
+MODE_CYCLE_KEY = pygame.K_b
+
 # イベント送信（KEYDOWN）: key -> opcode。確定イベントは Ping(0) のみ（G⇄C 双方向）。
 EVENT_KEYS: Dict[int, int] = {
     pygame.K_g: cc_map.OP_PING,
@@ -56,6 +59,7 @@ def help_text() -> str:
         "  Preset    : ]=+1  [=-1（CC105 0-127・変化時送信）\n"
         "  Error     : X=+1  Z=-1（CC104 0-127・変化時送信）\n"
         "  State     : V=+1  C=-1（CC102 0-127・変化時送信）\n"
+        "  Mode      : B=巡回切替 0→110→127→0（CC103）\n"
         "  イベント  : G=Ping（送信→応答待ち）\n"
         "  自動入力  : M（自動デバッグ入力 ON/OFF・全要素を巡回送信）\n"
         "  その他    : /=ヘルプ再表示  ESC=終了\n"

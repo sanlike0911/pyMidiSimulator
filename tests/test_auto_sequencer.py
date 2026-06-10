@@ -114,40 +114,63 @@ class TestButtonPhase:
         assert seq._phase is Phase.SCALAR
 
 
+def _collect_scalar_actions(seq: AutoSequencer) -> tuple[dict, list]:
+    """SCALAR フェーズの全アクションを (CC別値列, CC出現順) で収集する。
+
+    上限 500 Tick はテスト用 cc_step=64 での所要（スイープ 3 値×3 CC + Mode 3 値 ≈ 12 Tick）
+    に対し十分大きく、cc_step=1 相当（約 390 Tick）でも完走できる値。
+    """
+    by_cc: dict = {}
+    order: list = []
+    for _ in range(500):
+        if seq._phase is not Phase.SCALAR:
+            break
+        for a in seq.tick(event_pending=False):
+            if a.kind is ActionKind.SCALAR:
+                by_cc.setdefault(a.target, []).append(a.value)
+                if a.target not in order:
+                    order.append(a.target)
+    return by_cc, order
+
+
 class TestScalarPhase:
-    def test_sweeps_state_error_preset_in_cc_order(self):
+    def test_sweeps_scalars_in_cc_order(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
         _advance_to_phase(seq, Phase.SCALAR)
+        by_cc, order = _collect_scalar_actions(seq)
 
-        by_cc = {cc_map.STATE_CC: [], cc_map.ERROR_CC: [], cc_map.PRESET_CC: []}
-        order = []
-        for _ in range(300):
-            if seq._phase is not Phase.SCALAR:
-                break
-            for a in seq.tick(event_pending=False):
-                if a.kind is ActionKind.SCALAR:
-                    by_cc[a.target].append(a.value)
-                    if a.target not in order:
-                        order.append(a.target)
-
-        # State(102) → Error(104) → Preset(105) の CC 昇順で処理される
-        assert order == [cc_map.STATE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC]
-        # 各スカラーは 0 から始まり 127 で終わる
+        # State(102) → Mode(103) → Error(104) → Preset(105) の CC 昇順で処理される
+        assert order == [
+            cc_map.STATE_CC, cc_map.MODE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC
+        ]
+        # Mode 以外の各スカラーは 0 から始まり 127 で終わる
         for cc in (cc_map.STATE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC):
             assert by_cc[cc][0] == 0
             assert by_cc[cc][-1] == cc_map.MAX_7BIT
             assert max(by_cc[cc]) == cc_map.MAX_7BIT  # 127 を超えない
 
-    def test_mode_cc_is_not_swept(self):
-        # Mode(CC103) は動作モード通知のため巡回対象外（設計書 §7: 誤認防止）
+    def test_mode_sends_only_valid_values_and_returns_to_normal(self):
+        # Mode(CC103) はスイープせず有効 3 値のみ送信し、最後に必ず通常(0)へ復帰する
+        # （無効値の大量送信と、非通常モードのまま終わる誤認を防ぐ）
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
+        _advance_to_phase(seq, Phase.SCALAR)
+        by_cc, _order = _collect_scalar_actions(seq)
+        assert by_cc[cc_map.MODE_CC] == [
+            cc_map.MODE_VERSION_UP,
+            cc_map.MODE_FACTORY_INSPECTION,
+            cc_map.MODE_NORMAL,
+        ]
+
+    def test_mode_actions_always_carry_log(self):
+        # Mode は値の意味が重要なため全送信をログ（モード名付き）で可視化する
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
         _advance_to_phase(seq, Phase.SCALAR)
         for _ in range(300):
             if seq._phase is not Phase.SCALAR:
                 break
             for a in seq.tick(event_pending=False):
-                if a.kind is ActionKind.SCALAR:
-                    assert a.target != cc_map.MODE_CC
+                if a.kind is ActionKind.SCALAR and a.target == cc_map.MODE_CC:
+                    assert a.log is not None
 
     def test_enters_event_phase_after_preset(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
