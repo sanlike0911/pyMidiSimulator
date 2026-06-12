@@ -22,7 +22,7 @@ import keyboard_map
 import midi_io as midi_io_mod
 from auto_sequencer import ActionKind, AutoSequencer, SendAction
 from controller_state import ControllerState
-from messaging import Messaging, MessagingState
+from messaging import Messaging, MessagingState, RESPONSE_TIMEOUT_TICKS
 
 TICK_INTERVAL = 1.0 / 60.0
 # 押下中ランプの 1 Tick あたりの 14bit 変化量（約 0.5 秒でフルスケール）
@@ -33,6 +33,20 @@ AXIS_CENTER = cc_map.CENTER_14BIT
 AUTO_STICK_STEP = 550        # スティックスイープの 1 Tick あたり 14bit 変化量
 AUTO_BUTTON_HOLD_TICKS = 15  # 各ボタンの ON 保持 Tick 数（≒0.25s @60fps）
 AUTO_CC_STEP = 8             # Preset/Error/State スイープの刻み（0→127 を約16段）
+
+# --- ACK 注入（コマンド ACK のデバッグ設定）の巡回プリセット ---
+# 遅延（Tick）: 0=即時 / 10=タイムアウト(30 Tick)内の体感遅延 /
+# 35=タイムアウト超（遅延応答破棄の試験）/ None=無応答（純粋なタイムアウト→再送の試験）
+ACK_DELAY_PRESETS: tuple[Optional[int], ...] = (0, 10, 35, None)
+# 仕様 STATUS 予約帯(4–63)の代表値。受信側の「未知の値を NG として扱う」規約の試験に使う
+RESERVED_STATUS_PROBE = 63
+ACK_FORCED_STATUS_PRESETS: tuple[Optional[int], ...] = (
+    None,  # 通常（検証結果どおり）
+    cc_map.STATUS_UNKNOWN_OP,
+    cc_map.STATUS_INVALID_ARG,
+    cc_map.STATUS_REJECTED,
+    RESERVED_STATUS_PROBE,
+)
 
 # pygame ウィンドウ HUD 用フォント。デフォルト(SysFont(None))は日本語グリフを持たず
 # 文字化けするため、日本語対応フォントを OS 横断の候補から探索する。
@@ -77,6 +91,7 @@ class ControllerSimulator:
             self._midi.send_cc,
             self._params.validate_command,
             self._params.execute_command,
+            on_log=print,
         )
         self._lock = threading.Lock()  # MIDI 出力と messaging を直列化（受信は別スレッド）
         self._running = True
@@ -94,6 +109,9 @@ class ControllerSimulator:
         self._auto: Optional[AutoSequencer] = None
         self._prev_command = None
         self._prev_event_response = None
+        # ACK 注入（T/E キー巡回）の現在位置。設定の実体は messaging が持つ
+        self._ack_delay_idx = 0
+        self._ack_status_idx = 0
 
     # --- 起動シーケンス -----------------------------------------------------
     def run(self) -> None:
@@ -208,8 +226,17 @@ class ControllerSimulator:
             self._on_keyup(event.key)
 
     def _on_keydown(self, key: int) -> None:
-        """KEYDOWN: 自動モード中は M/ヘルプ/終了のみ受理。手動時はボタン/離散/イベント/中心点移動。"""
-        allowed_in_auto = (keyboard_map.AUTO_MODE_KEY, keyboard_map.HELP_KEY, keyboard_map.QUIT_KEY)
+        """KEYDOWN: 自動モード中は M/ヘルプ/終了/ACK 注入のみ受理。手動時は全キーを処理する。
+
+        ACK 注入（T/E）はコマンド受信側の設定で、受信・ACK は自動モード中も動くため許可する。
+        """
+        allowed_in_auto = (
+            keyboard_map.AUTO_MODE_KEY,
+            keyboard_map.HELP_KEY,
+            keyboard_map.QUIT_KEY,
+            keyboard_map.ACK_DELAY_CYCLE_KEY,
+            keyboard_map.ACK_STATUS_CYCLE_KEY,
+        )
         if self._auto_mode and key not in allowed_in_auto:
             return
         if key in keyboard_map.BUTTON_KEYS:
@@ -227,6 +254,10 @@ class ControllerSimulator:
             self._params.cycle_mode()
         elif key in keyboard_map.EVENT_KEYS:
             self._send_event(keyboard_map.EVENT_KEYS[key])
+        elif key == keyboard_map.ACK_DELAY_CYCLE_KEY:
+            self._cycle_ack_delay()
+        elif key == keyboard_map.ACK_STATUS_CYCLE_KEY:
+            self._cycle_ack_forced_status()
         elif key == keyboard_map.AXIS_RESET_KEY:
             self._reset_axes()
         elif key == keyboard_map.AUTO_MODE_KEY:
@@ -257,6 +288,35 @@ class ControllerSimulator:
             print(f"イベント送信: {name}(op={opcode})")
         else:
             print("イベント送信を抑止: 前のイベントが応答待ちです")
+
+    # --- ACK 注入（コマンド ACK のデバッグ設定・T/E キー） --------------------
+    def _cycle_ack_delay(self) -> None:
+        """ACK 応答タイミングのプリセットを巡回する（即時→10→35 Tick→無応答→…）。"""
+        self._ack_delay_idx = (self._ack_delay_idx + 1) % len(ACK_DELAY_PRESETS)
+        delay = ACK_DELAY_PRESETS[self._ack_delay_idx]
+        self._messaging.set_ack_delay(delay)
+        if delay is None:
+            print("[ACK 注入] 無応答: ACK を返しません（タイムアウト→再送の試験）")
+        elif delay == 0:
+            print("[ACK 注入] 解除: 即時応答（通常動作）")
+        else:
+            note = (
+                f"タイムアウト {RESPONSE_TIMEOUT_TICKS} Tick 以内"
+                if delay <= RESPONSE_TIMEOUT_TICKS
+                else f"タイムアウト {RESPONSE_TIMEOUT_TICKS} Tick 超＝遅延応答破棄の試験"
+            )
+            print(f"[ACK 注入] ACK 遅延: {delay} Tick（{note}）")
+
+    def _cycle_ack_forced_status(self) -> None:
+        """ACK 強制 status のプリセットを巡回する（通常→1→2→3→予約63→…）。"""
+        self._ack_status_idx = (self._ack_status_idx + 1) % len(ACK_FORCED_STATUS_PRESETS)
+        status = ACK_FORCED_STATUS_PRESETS[self._ack_status_idx]
+        self._messaging.set_ack_forced_status(status)
+        if status is None:
+            print("[ACK 注入] 解除: 検証結果どおり応答（通常動作）")
+        else:
+            name = cc_map.STATUS_NAMES.get(status, "予約値")
+            print(f"[ACK 注入] 強制 status: {name}({status})（NG 応答・実行は抑止）")
 
     def _ramp_axes(self, pressed) -> None:
         """押下中キーに応じて軸をランプし、変化した軸だけ 14bit CC を送信する。"""
@@ -386,9 +446,16 @@ class ControllerSimulator:
         if snapshot.last_command is not None and snapshot.last_command is not self._prev_command:
             cmd = snapshot.last_command
             name = cc_map.OPCODE_NAMES.get(cmd.opcode, "未知")
+            if cmd.dropped:
+                result = "無応答（ACK 注入・実行なし）"
+                seq_label = "受信seq"  # ACK 未送信のため seqEcho ではない
+            else:
+                forced_note = "（強制注入）" if cmd.forced else ""
+                result = f"status={cmd.status}{forced_note}"
+                seq_label = "seqEcho"
             print(
                 f"[受信コマンド] {name}(op={cmd.opcode}) arg1={cmd.arg1} arg2={cmd.arg2}"
-                f" -> status={cmd.status} (seqEcho={cmd.seq})"
+                f" -> {result} ({seq_label}={cmd.seq})"
             )
             self._prev_command = snapshot.last_command
         response = snapshot.last_event_response

@@ -55,6 +55,11 @@ EVENT_KEYS: Dict[int, int] = {
     pygame.K_g: cc_map.OP_PING,
 }
 
+# ACK 注入（コマンド ACK のデバッグ設定・KEYDOWN）: 応答タイミング / 強制 status を巡回する。
+# コマンド受信・ACK は自動デバッグ入力モード中も動くため、両キーは自動モード中も受理される。
+ACK_DELAY_CYCLE_KEY = pygame.K_t
+ACK_STATUS_CYCLE_KEY = pygame.K_e
+
 AUTO_MODE_KEY = pygame.K_m
 HELP_KEY = pygame.K_SLASH
 QUIT_KEY = pygame.K_ESCAPE
@@ -74,8 +79,11 @@ def help_text() -> str:
         "  State     : V=+1  C=-1（CC114 0-127・変化時送信）\n"
         "  Mode      : B=巡回切替 0→110→127→0（CC115）\n"
         "  イベント  : G=Ping（送信→応答待ち）\n"
+        "  ACK遅延   : T=巡回 即時→10→35 Tick→無応答（コマンドACKタイミング注入）\n"
+        "  ACK強制   : E=巡回 通常→UNKNOWN_OP→INVALID_ARG→REJECTED→予約63（NG応答注入）\n"
         "  自動入力  : M（自動デバッグ入力 ON/OFF・全要素を巡回送信）\n"
         "  その他    : /=ヘルプ再表示  ESC=終了\n"
         "  ※ コマンド(Ping/Reset/SetMode/SetZero/SetPreset/SetValve)は\n"
-        "     Unity から受信し自動 ACK します"
+        "     Unity から受信し自動 ACK します（T/E で ACK の遅延・無応答・強制エラーを\n"
+        "     注入可能＝対向のタイムアウト/エラー処理試験用・自動入力モード中も有効）"
     )
