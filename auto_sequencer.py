@@ -15,10 +15,11 @@ import cc_map
 class ActionKind(Enum):
     """送信アクションの種別。target/value の意味が種別ごとに変わる。"""
 
-    AXIS = "axis"      # target=軸index(0-3),    value=14bit raw(0-16383)
-    BUTTON = "button"  # target=ボタンindex(0-9), value=127|0
-    SCALAR = "scalar"  # target=CC番号,           value=0-127
-    EVENT = "event"    # target=opcode,           value=未使用(0)。確定イベント Ping は ARG なし
+    AXIS = "axis"      # target=軸index(0-3),       value=14bit raw(0-16383)
+    SLIDER = "slider"  # target=スライダーindex(0-3), value=14bit raw(0-16383)
+    BUTTON = "button"  # target=ボタンindex(0-11),   value=127|0
+    SCALAR = "scalar"  # target=CC番号,              value=0-127
+    EVENT = "event"    # target=opcode,              value=未使用(0)。確定イベント Ping は ARG なし
 
 
 @dataclass(frozen=True)
@@ -32,24 +33,25 @@ class SendAction:
 
 
 class Phase(Enum):
-    """巡回シーケンスのフェーズ。STICK→BUTTON→SCALAR→EVENT→(STICK) と循環する。"""
+    """巡回シーケンスのフェーズ。STICK→SLIDER→BUTTON→SCALAR→EVENT→(STICK) と循環する。"""
 
     STICK = 0
-    BUTTON = 1
-    SCALAR = 2
-    EVENT = 3
+    SLIDER = 1
+    BUTTON = 2
+    SCALAR = 3
+    EVENT = 4
 
 
 class _Leg(Enum):
-    """スティック軸の往復区間。"""
+    """14bit 軸の往復区間。スティックは 3 区間、単極のスライダーは TO_CENTER を使わない。"""
 
-    TO_MAX = 0      # 中心 8192 → 上端 16383
-    TO_MIN = 1      # 上端 16383 → 下端 0
-    TO_CENTER = 2   # 下端 0 → 中心 8192（到達で軸完了）
+    TO_MAX = 0      # スティック: 中心 8192 → 上端 16383 ／ スライダー: 0 → 上端 16383
+    TO_MIN = 1      # スティック: 上端 → 下端 0 ／ スライダー: 上端 → 0（到達で完了）
+    TO_CENTER = 2   # スティックのみ: 下端 0 → 中心 8192（到達で軸完了）
 
 
 # スカラーフェーズ対象（State, Mode, Error, Preset — CC 昇順）。
-# Mode(CC103) は 0–127 スイープではなく有効 3 値（110→127→0）のみを送り、最後に
+# Mode(CC115) は 0–127 スイープではなく有効 3 値（110→127→0）のみを送り、最後に
 # 必ず通常(0)へ復帰する（無効値の大量送信と、非通常モードのまま終わる誤認を防ぐ）。
 _SCALAR_CCS = (cc_map.STATE_CC, cc_map.MODE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC)
 _SCALAR_NAMES = ("State", "Mode", "Error", "Preset")
@@ -79,6 +81,9 @@ class AutoSequencer:
         self._axis_index = 0
         self._axis_value = cc_map.CENTER_14BIT
         self._axis_leg = _Leg.TO_MAX
+        self._slider_index = 0
+        self._slider_value = 0
+        self._slider_leg = _Leg.TO_MAX
         self._button_index = 0
         self._button_on = False
         self._hold_counter = 0
@@ -91,6 +96,8 @@ class AutoSequencer:
         """1 Tick 進め、その Tick に送るべきアクション列を返す。"""
         if self._phase is Phase.STICK:
             return self._tick_stick()
+        if self._phase is Phase.SLIDER:
+            return self._tick_slider()
         if self._phase is Phase.BUTTON:
             return self._tick_button()
         if self._phase is Phase.SCALAR:
@@ -123,14 +130,44 @@ class AutoSequencer:
         return [action]
 
     def _advance_axis(self) -> None:
-        """現在の軸を終え、次の軸へ。4 軸完了で BUTTON フェーズへ。"""
+        """現在の軸を終え、次の軸へ。4 軸完了で SLIDER フェーズへ。"""
         self._axis_index += 1
         if self._axis_index >= len(cc_map.CC_AXES):
             self._axis_index = 0
-            self._phase = Phase.BUTTON
+            self._phase = Phase.SLIDER
         else:
             self._axis_value = cc_map.CENTER_14BIT
             self._axis_leg = _Leg.TO_MAX
+
+    def _tick_slider(self) -> List[SendAction]:
+        """スライダーは単極（初期 0）のため 0→16383→0 の 2 区間でスイープする。"""
+        idx = self._slider_index
+        slider_done = False
+        log = None
+        if self._slider_leg is _Leg.TO_MAX:
+            self._slider_value = min(self._slider_value + self._stick_step, cc_map.MAX_14BIT)
+            if self._slider_value >= cc_map.MAX_14BIT:
+                self._slider_leg = _Leg.TO_MIN
+                log = f"スライダー {cc_map.SLIDER_NAMES[idx]} 上端 {self._slider_value}"
+        else:  # TO_MIN
+            self._slider_value = max(self._slider_value - self._stick_step, 0)
+            if self._slider_value <= 0:
+                slider_done = True
+                log = f"スライダー {cc_map.SLIDER_NAMES[idx]} 下端 {self._slider_value}"
+        action = SendAction(ActionKind.SLIDER, idx, self._slider_value, log)
+        if slider_done:
+            self._advance_slider()
+        return [action]
+
+    def _advance_slider(self) -> None:
+        """現在のスライダーを終え、次へ。4 本完了で BUTTON フェーズへ。"""
+        self._slider_index += 1
+        if self._slider_index >= len(cc_map.SLIDER_CCS):
+            self._slider_index = 0
+            self._phase = Phase.BUTTON
+        else:
+            self._slider_value = 0
+            self._slider_leg = _Leg.TO_MAX
 
     def _tick_button(self) -> List[SendAction]:
         idx = self._button_index

@@ -33,6 +33,7 @@ NAMED_CCS: dict[str, tuple[int, str]] = {
 }
 
 AXIS_LABELS = ("左スティック X", "左スティック Y", "右スティック X", "右スティック Y")
+SLIDER_LABELS = ("Slider1", "Slider2", "Slider3", "Slider4")
 
 # opcode 表の名称（英字部分）-> 実装定数
 OPCODE_CONSTANTS: dict[str, int] = {
@@ -102,13 +103,30 @@ class TestQuickTable:
             )
             assert direction == "IN"
 
-    def test_button_ccs(self, spec_text: str) -> None:
+    def test_slider_cc_pairs(self, spec_text: str) -> None:
+        """使用中の Slider1–4 の CC ペア照合（予約帯 5–8 は未使用のため対象外）。"""
         rows = _quick_table_rows(spec_text)
-        matched = [r for r in rows if re.match(r"^ボタン 0[–-]9\b", r[1])]
-        assert len(matched) == 1, "早見表に「ボタン 0–9」の行が 1 行見つからない"
-        cc_text, _, direction = matched[0]
+        for slider_index, label in enumerate(SLIDER_LABELS):
+            matched = [r for r in rows if re.match(rf"^{label}\b", r[1])]
+            assert len(matched) == 1, f"早見表に「{label}」の行が 1 行見つからない: {matched}"
+            cc_text, _, direction = matched[0]
+            m = re.match(r"^(\d+)\s*/\s*(\d+)$", cc_text)
+            assert m, f"「{label}」の CC 欄 '{cc_text}' を MSB/LSB としてパースできない"
+            assert cc_map.SLIDER_CCS[slider_index] == (int(m.group(1)), int(m.group(2))), (
+                f"{label} の CC ペアが仕様と不一致"
+            )
+            assert direction == "IN"
+
+    def test_button_ccs(self, spec_text: str) -> None:
+        """ボタン行「ボタン 0–N」をパースし、本数（個数変更含む）と CC 範囲を照合する。"""
+        rows = _quick_table_rows(spec_text)
+        matched = [r for r in rows if re.match(r"^ボタン 0[–-]\d+\b", r[1])]
+        assert len(matched) == 1, "早見表に「ボタン 0–N」の行が 1 行見つからない"
+        cc_text, label, direction = matched[0]
+        label_m = re.match(r"^ボタン 0[–-](\d+)\b", label)
         m = re.match(r"^(\d+)[–-](\d+)$", cc_text)
         assert m, f"ボタンの CC 欄 '{cc_text}' を範囲としてパースできない"
+        assert len(cc_map.BUTTON_CCS) == int(label_m.group(1)) + 1, "ボタン個数が仕様と不一致"
         assert cc_map.BUTTON_CCS == tuple(range(int(m.group(1)), int(m.group(2)) + 1)), (
             "ボタン CC 範囲が仕様と不一致"
         )
@@ -148,6 +166,7 @@ class TestQuickTable:
     def test_no_cc_number_shared_between_in_and_out(self, spec_text: str) -> None:
         """仕様の規約「IN / OUT で CC 番号の重複なし」を実装定数側でも検証する。"""
         sent = {msb for msb, _ in cc_map.CC_AXES} | {lsb for _, lsb in cc_map.CC_AXES}
+        sent |= {msb for msb, _ in cc_map.SLIDER_CCS} | {lsb for _, lsb in cc_map.SLIDER_CCS}
         sent |= set(cc_map.BUTTON_CCS)
         sent |= {cc_map.STATE_CC, cc_map.MODE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC}
         sent |= {cc_map.CMDRSP_STATUS_CC, cc_map.EVT_ARG_CC, cc_map.EVT_OP_CC}

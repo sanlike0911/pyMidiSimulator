@@ -45,18 +45,18 @@ class TestStickPhase:
         assert min(values) == 0                  # 0 に到達
         assert values[-1] == cc_map.CENTER_14BIT # 8192 へ復帰して軸完了
 
-    def test_processes_four_axes_then_enters_button_phase(self):
+    def test_processes_four_axes_then_enters_slider_phase(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=2, cc_step=64)
         # stick_step を最大にすると 1 Tick で各 leg が端へ到達 → 軸あたり 3 Tick
         seen_axes = set()
         for _ in range(50):
-            if seq._phase is Phase.BUTTON:
+            if seq._phase is Phase.SLIDER:
                 break
             for a in seq.tick(event_pending=False):
                 if a.kind is ActionKind.AXIS:
                     seen_axes.add(a.target)
         assert seen_axes == {0, 1, 2, 3}
-        assert seq._phase is Phase.BUTTON
+        assert seq._phase is Phase.SLIDER
 
     def test_endpoints_carry_log_and_midpoints_do_not(self):
         seq = AutoSequencer(stick_step=4096, button_hold_ticks=2, cc_step=64)
@@ -76,6 +76,60 @@ def _advance_to_phase(seq: AutoSequencer, phase: Phase, limit: int = 2000):
     raise AssertionError(f"{phase} に到達しませんでした")
 
 
+class TestSliderPhase:
+    def test_slider0_sweeps_zero_max_zero(self):
+        # 単極（初期 0）のため 0→16383→0 の 2 区間スイープ（中心復帰なし）
+        seq = AutoSequencer(stick_step=4096, button_hold_ticks=2, cc_step=64)
+        _advance_to_phase(seq, Phase.SLIDER)
+
+        values = []
+        for _ in range(20):
+            actions = seq.tick(event_pending=False)
+            slider_actions = [
+                a for a in actions if a.kind is ActionKind.SLIDER and a.target == 0
+            ]
+            values.extend(a.value for a in slider_actions)
+            if seq._slider_index != 0:  # スライダー0完了 → 次へ進んだ
+                break
+
+        assert values[0] == 4096                 # 0 + 4096（上昇開始）
+        assert max(values) == cc_map.MAX_14BIT   # 16383 に到達
+        assert values[-1] == 0                   # 0 へ復帰してスライダー完了
+
+    def test_processes_four_sliders_then_enters_button_phase(self):
+        seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=2, cc_step=64)
+        _advance_to_phase(seq, Phase.SLIDER)
+        seen = set()
+        for _ in range(50):
+            if seq._phase is Phase.BUTTON:
+                break
+            for a in seq.tick(event_pending=False):
+                if a.kind is ActionKind.SLIDER:
+                    seen.add(a.target)
+        assert seen == {0, 1, 2, 3}
+        assert seq._phase is Phase.BUTTON
+
+    def test_endpoints_carry_log_and_midpoints_do_not(self):
+        seq = AutoSequencer(stick_step=4096, button_hold_ticks=2, cc_step=64)
+        _advance_to_phase(seq, Phase.SLIDER)
+        first = seq.tick(event_pending=False)[0]   # 4096（中間点）
+        assert first.log is None
+        for _ in range(20):
+            action = seq.tick(event_pending=False)[0]
+            if action.value == cc_map.MAX_14BIT:
+                assert action.log is not None  # 上端はログあり
+                break
+        else:
+            raise AssertionError("上端に到達しませんでした")
+        for _ in range(20):
+            action = seq.tick(event_pending=False)[0]
+            if action.value == 0:
+                assert action.log is not None  # 下端（スライダー完了 Tick）もログあり
+                break
+        else:
+            raise AssertionError("下端に到達しませんでした")
+
+
 class TestButtonPhase:
     def test_each_button_turns_on_then_off_in_order(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=2, cc_step=64)
@@ -91,8 +145,8 @@ class TestButtonPhase:
                 elif a.kind is ActionKind.BUTTON and a.value == 0:
                     off_order.append(a.target)
 
-        assert on_order == list(range(len(cc_map.BUTTON_CCS)))   # 0..9 を順に ON
-        assert off_order == list(range(len(cc_map.BUTTON_CCS)))  # 0..9 を順に OFF
+        assert on_order == list(range(len(cc_map.BUTTON_CCS)))   # 0..11 を順に ON
+        assert off_order == list(range(len(cc_map.BUTTON_CCS)))  # 0..11 を順に OFF
 
     def test_button_held_for_configured_ticks(self):
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=3, cc_step=64)
@@ -139,7 +193,7 @@ class TestScalarPhase:
         _advance_to_phase(seq, Phase.SCALAR)
         by_cc, order = _collect_scalar_actions(seq)
 
-        # State(102) → Mode(103) → Error(104) → Preset(105) の CC 昇順で処理される
+        # State(114) → Mode(115) → Error(116) → Preset(117) の CC 昇順で処理される
         assert order == [
             cc_map.STATE_CC, cc_map.MODE_CC, cc_map.ERROR_CC, cc_map.PRESET_CC
         ]
@@ -150,7 +204,7 @@ class TestScalarPhase:
             assert max(by_cc[cc]) == cc_map.MAX_7BIT  # 127 を超えない
 
     def test_mode_sends_only_valid_values_and_returns_to_normal(self):
-        # Mode(CC103) はスイープせず有効 3 値のみ送信し、最後に必ず通常(0)へ復帰する
+        # Mode(CC115) はスイープせず有効 3 値のみ送信し、最後に必ず通常(0)へ復帰する
         # （無効値の大量送信と、非通常モードのまま終わる誤認を防ぐ）
         seq = AutoSequencer(stick_step=cc_map.MAX_14BIT, button_hold_ticks=1, cc_step=64)
         _advance_to_phase(seq, Phase.SCALAR)
