@@ -7,27 +7,32 @@ MIDI / pygame に依存しない純粋ロジック。ユニットテストの中
 from __future__ import annotations
 
 # --- CC 番号 ---------------------------------------------------------------
-# 送信（Sim -> Unity）: スティック軸 (MSB CC, LSB CC) 左X / 左Y / 右X / 右Y
-CC_AXES: tuple[tuple[int, int], ...] = ((16, 48), (17, 49), (18, 50), (19, 51))
+# 送信（Sim -> Unity）: スティック軸 (MSB CC, LSB CC) 左X / 左Y / 右X / 右Y（双極・中央 8192）
+CC_AXES: tuple[tuple[int, int], ...] = ((20, 52), (21, 53), (22, 54), (23, 55))
 AXIS_NAMES: tuple[str, ...] = ("左X", "左Y", "右X", "右Y")
 
-# 送信: ボタン 0–9
-BUTTON_CCS: tuple[int, ...] = tuple(range(20, 30))
+# 送信: スライダー 1–4 (MSB CC, LSB CC)（単極・0 基準。帯は 24–31/56–63 で 5–8 は予約＝未使用）
+SLIDER_CCS: tuple[tuple[int, int], ...] = ((24, 56), (25, 57), (26, 58), (27, 59))
+SLIDER_NAMES: tuple[str, ...] = ("Slider1", "Slider2", "Slider3", "Slider4")
 
-# 送信: 0–127 生値（パラメータ帯 CC102–109・106–109 は予約）
-STATE_CC = 102
-MODE_CC = 103   # 動作モード通知（値体系は SetMode と共通）
-ERROR_CC = 104
-PRESET_CC = 105
+# 送信: ボタン 0–11（CC102–113 の 12 本固定・予約帯なし）
+BUTTON_CCS: tuple[int, ...] = tuple(range(102, 114))
 
-# コマンド/イベント I/F（CC110–119 帯・117–119 は予約）
-CMD_ARG1_CC = 110       # 受信: コマンド第1引数
-CMD_ARG2_CC = 111       # 受信: コマンド第2引数（現行確定 opcode ではすべて未使用）
-CMD_OP_CC = 112         # 受信: コマンド opcode + seq (commit)
-EVTRSP_STATUS_CC = 113  # 受信: イベント送信への ACK (status + seqEcho)
-CMDRSP_STATUS_CC = 114  # 送信: 受信コマンドへの ACK (status + seqEcho)
-EVT_ARG_CC = 115        # 送信: イベント引数（確定イベント Ping では未使用＝送信省略）
-EVT_OP_CC = 116         # 送信: イベント opcode + seq (commit)
+# 送信: 0–127 生値（パラメータ帯 CC114–117）
+STATE_CC = 114
+MODE_CC = 115   # 動作モード通知（値体系は SetMode と共通）
+ERROR_CC = 116
+PRESET_CC = 117
+
+# コマンド/イベント I/F（CC85–87 / 89–90 / 118–119。CC88 は High Resolution
+# Velocity Prefix として定義済みのため割り当て禁止）
+CMD_ARG1_CC = 85        # 受信: コマンド第1引数
+CMD_ARG2_CC = 86        # 受信: コマンド第2引数（現行確定 opcode ではすべて未使用）
+CMD_OP_CC = 87          # 受信: コマンド opcode + seq (commit)
+EVTRSP_STATUS_CC = 89   # 受信: イベント送信への ACK (status + seqEcho)
+CMDRSP_STATUS_CC = 90   # 送信: 受信コマンドへの ACK (status + seqEcho)
+EVT_ARG_CC = 118        # 送信: イベント引数（確定イベント Ping では未使用＝送信省略）
+EVT_OP_CC = 119         # 送信: イベント opcode + seq (commit)
 
 # --- 値域 ------------------------------------------------------------------
 CENTER_14BIT = 8192
@@ -65,7 +70,7 @@ OPCODE_NAMES: dict[int, str] = {
 # イベント経路（Sim → Unity）で送信できる確定 opcode（方向が C→G または G⇄C のもの）
 EVENT_OPCODES: tuple[int, ...] = (OP_PING,)
 
-# --- Mode 値（CC103 通知と SetMode ARG1 で共通） ----------------------------
+# --- Mode 値（CC115 通知と SetMode ARG1 で共通） ----------------------------
 MODE_NORMAL = 0
 MODE_VERSION_UP = 110
 MODE_FACTORY_INSPECTION = 127
@@ -98,12 +103,20 @@ def combine_14bit(msb: int, lsb: int) -> int:
 
 
 def norm14_bipolar(value: int) -> float:
-    """14bit 生値を中央 8192 基準で -1.0..+1.0 に正規化する（表示用）。
+    """14bit 生値を中央 8192 基準で -1.0..+1.0 に正規化する（スティック表示用）。
 
     仕様の式 n = (v - 8192) / 8192 を計算し、[-1.0, +1.0] にクランプする。
     """
     n = (value - CENTER_14BIT) / CENTER_14BIT
     return max(-1.0, min(1.0, n))
+
+
+def norm14_unipolar(value: int) -> float:
+    """14bit 生値を 0 基準で 0.0..1.0 に線形正規化する（スライダー表示用）。
+
+    仕様の式 result = clamp(v / 16383, 0.0, 1.0) を計算する。
+    """
+    return max(0.0, min(1.0, value / MAX_14BIT))
 
 
 def pack_seq(payload: int, seq: int) -> int:

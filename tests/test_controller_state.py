@@ -185,7 +185,7 @@ class TestExecute:
         cs, s, _r, _l = make()
         cs.execute_command(cc_map.OP_SET_PRESET, 100, 0)
         assert cs.preset == 100
-        assert s.sent == [(cc_map.PRESET_CC, 100)]  # 変化時のみ CC105 で新値通知
+        assert s.sent == [(cc_map.PRESET_CC, 100)]  # 変化時のみ CC117 で新値通知
 
     def test_execute_set_preset_same_value_no_notify(self):
         cs, s, _r, _l = make()

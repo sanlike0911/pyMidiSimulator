@@ -2,11 +2,12 @@
 """MIDI Controller Simulator（コントローラ役・キーボード操作）。
 
 新 MIDI 仕様（docs/specs/midi-mapping.md）に対応。実機 MIDI コントローラの代わりに、
-キーボードから スティック / ボタン / State / Error / Preset を送信し、Unity が送る
-コマンド（Ping/Reset/SetMode/SetZero/SetPreset/SetValve）を受信して ACK を返し、
-イベント（Ping）を送信して応答を待つ。
+キーボードから スティック / スライダー / ボタン / State / Error / Preset を送信し、
+Unity が送るコマンド（Ping/Reset/SetMode/SetZero/SetPreset/SetValve）を受信して
+ACK を返し、イベント（Ping）を送信して応答を待つ。
 
-設計: docs/superpowers/specs/2026-06-10-cc-band-and-opcode-redesign-design.md
+設計: docs/superpowers/specs/2026-06-12-cc-remap-slider-and-12-buttons-design.md
+（基盤: 2026-06-10-cc-band-and-opcode-redesign-design.md）
 """
 from __future__ import annotations
 
@@ -82,6 +83,9 @@ class ControllerSimulator:
 
         self._axis_raw: List[int] = [AXIS_CENTER] * 4
         self._axis_sent: List[int] = [-1] * 4  # -1 = 未送信（初回必ず送る）
+        # スライダーは単極（原点 0）。sent=-1 で初回必ず送る（スティックと同方式）
+        self._slider_raw: List[int] = [0] * len(cc_map.SLIDER_CCS)
+        self._slider_sent: List[int] = [-1] * len(cc_map.SLIDER_CCS)
 
         self._buttons = [False] * len(cc_map.BUTTON_CCS)
 
@@ -131,7 +135,7 @@ class ControllerSimulator:
         if in_idx is None:
             print("MIDI 入力なし: コマンド受信／イベント応答は無効です（送信のみ）")
             return True
-        # 新仕様は IN/OUT で CC 番号の重複なし（自己エコーが受信処理対象 CC110–113 に
+        # 新仕様は IN/OUT で CC 番号の重複なし（自己エコーが受信処理対象 CC85–87/89 に
         # 入ることはない）ため、同一ポート選択の警告は不要。
         self._midi.open_input(in_idx, self._on_cc_received)
         print(f"入力ポート '{in_ports[in_idx]}' に接続しました")
@@ -185,6 +189,7 @@ class ControllerSimulator:
                     self._tick_auto()
                 else:
                     self._ramp_axes(pressed)
+                    self._ramp_sliders(pressed)
                 self._messaging.tick()
                 snapshot = self._messaging.snapshot()
             if self._help_requested:
@@ -223,7 +228,7 @@ class ControllerSimulator:
         elif key in keyboard_map.EVENT_KEYS:
             self._send_event(keyboard_map.EVENT_KEYS[key])
         elif key == keyboard_map.AXIS_RESET_KEY:
-            self._center_axes()
+            self._reset_axes()
         elif key == keyboard_map.AUTO_MODE_KEY:
             self._toggle_auto_mode()
         elif key == keyboard_map.HELP_KEY:
@@ -242,6 +247,8 @@ class ControllerSimulator:
             print(f"ボタン{idx}: OFF")
         elif key in keyboard_map.AXIS_KEYS:
             self._log_axis(keyboard_map.AXIS_KEYS[key][0])
+        elif key in keyboard_map.SLIDER_KEYS:
+            self._log_slider(keyboard_map.SLIDER_KEYS[key][0])
 
     def _send_event(self, opcode: int) -> None:
         """イベントを送信する（確定イベント Ping は ARG 未使用のため送信省略）。"""
@@ -269,13 +276,31 @@ class ControllerSimulator:
                 self._midi.send_14bit(msb_cc, lsb_cc, self._axis_raw[axis])
                 self._axis_sent[axis] = self._axis_raw[axis]
 
+    def _ramp_sliders(self, pressed) -> None:
+        """押下中キーに応じてスライダーをランプし、変化したものだけ 14bit CC を送信する。"""
+        directions = [0] * len(cc_map.SLIDER_CCS)
+        for key, (idx, delta) in keyboard_map.SLIDER_KEYS.items():
+            if pressed[key]:
+                directions[idx] += delta
+        for idx in range(len(cc_map.SLIDER_CCS)):
+            if directions[idx] != 0:
+                self._slider_raw[idx] = cc_map.clamp(
+                    self._slider_raw[idx] + directions[idx] * STICK_STEP_PER_TICK,
+                    0,
+                    cc_map.MAX_14BIT,
+                )
+            if self._slider_raw[idx] != self._slider_sent[idx]:
+                msb_cc, lsb_cc = cc_map.SLIDER_CCS[idx]
+                self._midi.send_14bit(msb_cc, lsb_cc, self._slider_raw[idx])
+                self._slider_sent[idx] = self._slider_raw[idx]
+
     def _toggle_auto_mode(self) -> None:
-        """自動デバッグ入力モードを ON/OFF し、軸を中心点・全ボタン OFF に整える。"""
+        """自動デバッグ入力モードを ON/OFF し、軸・スライダーを原点・全ボタン OFF に整える。"""
         self._auto_mode = not self._auto_mode
         if self._auto_mode:
             self._auto = AutoSequencer(AUTO_STICK_STEP, AUTO_BUTTON_HOLD_TICKS, AUTO_CC_STEP)
         self._all_buttons_off()
-        self._center_axes()
+        self._reset_axes()
         print(f"自動デバッグ入力: {'ON' if self._auto_mode else 'OFF'}")
 
     def _all_buttons_off(self) -> None:
@@ -298,6 +323,11 @@ class ControllerSimulator:
             self._midi.send_14bit(msb_cc, lsb_cc, action.value)
             self._axis_raw[action.target] = action.value
             self._axis_sent[action.target] = action.value
+        elif action.kind is ActionKind.SLIDER:
+            msb_cc, lsb_cc = cc_map.SLIDER_CCS[action.target]
+            self._midi.send_14bit(msb_cc, lsb_cc, action.value)
+            self._slider_raw[action.target] = action.value
+            self._slider_sent[action.target] = action.value
         elif action.kind is ActionKind.BUTTON:
             self._buttons[action.target] = action.value > 0
             self._midi.send_cc(cc_map.BUTTON_CCS[action.target], action.value)
@@ -309,20 +339,31 @@ class ControllerSimulator:
         if action.log:
             print(f"[AUTO] {action.log}")
 
-    def _center_axes(self) -> None:
-        """全軸を中心点(8192)へ移動して送信する。"""
+    def _reset_axes(self) -> None:
+        """スティックを中心点(8192)へ・スライダーを原点(0)へ移動して送信する。"""
         for axis in range(4):
             self._axis_raw[axis] = AXIS_CENTER
             msb_cc, lsb_cc = cc_map.CC_AXES[axis]
             self._midi.send_14bit(msb_cc, lsb_cc, AXIS_CENTER)
             self._axis_sent[axis] = AXIS_CENTER
-        print(f"全軸を中心点 {AXIS_CENTER} へ移動")
+        for idx in range(len(cc_map.SLIDER_CCS)):
+            self._slider_raw[idx] = 0
+            msb_cc, lsb_cc = cc_map.SLIDER_CCS[idx]
+            self._midi.send_14bit(msb_cc, lsb_cc, 0)
+            self._slider_sent[idx] = 0
+        print(f"全軸を原点へ移動（スティック={AXIS_CENTER} / スライダー=0）")
 
     def _log_axis(self, axis: int) -> None:
         """軸の現在値と正規化値（双極 -1..+1）をログ出力する。"""
         raw = self._axis_raw[axis]
         norm = cc_map.norm14_bipolar(raw)
         print(f"{cc_map.AXIS_NAMES[axis]}: {raw} ({norm:+.3f})")
+
+    def _log_slider(self, idx: int) -> None:
+        """スライダーの現在値と正規化値（単極 0..1）をログ出力する。"""
+        raw = self._slider_raw[idx]
+        norm = cc_map.norm14_unipolar(raw)
+        print(f"{cc_map.SLIDER_NAMES[idx]}: {raw} ({norm:.3f})")
 
     # --- 受信処理（別スレッド → lock）-------------------------------------
     def _on_cc_received(self, cc: int, value: int) -> None:
@@ -334,11 +375,11 @@ class ControllerSimulator:
         """Reset コマンド実行時の外部状態初期化（ControllerState から呼ばれる）。
 
         パラメータの初期化と再初期通知は ControllerState 側が行う。ここでは
-        イベント保留の破棄と物理層シミュレーション（ボタン・軸）の初期化を行う。
+        イベント保留の破棄と物理層シミュレーション（ボタン・軸・スライダー）の初期化を行う。
         """
         self._messaging.clear_pending()
         self._all_buttons_off()
-        self._center_axes()
+        self._reset_axes()
 
     def _log_incoming_changes(self, snapshot: MessagingState) -> None:
         """受信コマンド・イベント応答が更新されていればログ出力する。"""

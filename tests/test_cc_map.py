@@ -37,6 +37,19 @@ class TestNormalization:
     def test_bipolar_clamped_above(self):
         assert cc_map.norm14_bipolar(99999) == 1.0
 
+    def test_unipolar_zero(self):
+        assert cc_map.norm14_unipolar(0) == 0.0
+
+    def test_unipolar_max(self):
+        assert cc_map.norm14_unipolar(16383) == 1.0
+
+    def test_unipolar_midpoint(self):
+        assert cc_map.norm14_unipolar(8192) == pytest.approx(0.5, abs=1e-3)
+
+    def test_unipolar_clamped(self):
+        assert cc_map.norm14_unipolar(99999) == 1.0
+        assert cc_map.norm14_unipolar(-5) == 0.0
+
 
 class TestSeqCodec:
     @pytest.mark.parametrize("payload", [0, 1, 4, 63])

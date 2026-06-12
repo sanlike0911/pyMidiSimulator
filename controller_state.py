@@ -27,7 +27,7 @@ class ControllerState:
         on_log: Callable[[str], None],
     ) -> None:
         self._send_cc = send_cc
-        self._on_reset = on_reset  # Reset 実行時の外部初期化（軸中心化・ボタン OFF 等）
+        self._on_reset = on_reset  # Reset 実行時の外部初期化（軸・スライダー原点化・ボタン OFF 等）
         self._on_log = on_log
         self._state = 0
         self._mode = cc_map.MODE_NORMAL
@@ -103,7 +103,7 @@ class ControllerState:
         self._send_cc(cc, value)
 
     def cycle_mode(self) -> int:
-        """Mode を有効値の並び（通常→バージョンアップ→出荷検査→通常）で巡回し CC103 を送信する。
+        """Mode を有効値の並び（通常→バージョンアップ→出荷検査→通常）で巡回し CC115 を送信する。
 
         手動デバッグ用に「コントローラ自身のモード遷移」を模擬する。SetMode コマンドの
         一方向遷移はゲーム側からの制約であり、本キー操作はその制約を受けずに巡回できる
@@ -160,12 +160,12 @@ class ControllerState:
         self._error = 0
         self._preset = 0
         self._valve = None
-        self._on_reset()  # 軸中心化・全ボタン OFF・イベント保留破棄（呼び出し側）
+        self._on_reset()  # 軸・スライダー原点化・全ボタン OFF・イベント保留破棄（呼び出し側）
         self._on_log("[Reset] コントローラを初期化しました")
         self.notify_initial()  # 接続直後相当の現在値通知
 
     def _execute_set_mode(self, value: int) -> None:
-        """変化時のみ mode を更新し CC103 で新モードを通知する（仕様 §3 送信契機）。"""
+        """変化時のみ mode を更新し CC115 で新モードを通知する（仕様 §3 送信契機）。"""
         if value == self._mode:
             return  # 通常→通常の同値設定: 変化なし・通知なし
         old = self._mode
@@ -177,7 +177,7 @@ class ControllerState:
         )
 
     def _execute_set_preset(self, value: int) -> None:
-        """変化時のみ preset を更新し CC105 で新値を通知する（同値設定は通知なし）。"""
+        """変化時のみ preset を更新し CC117 で新値を通知する（同値設定は通知なし）。"""
         if value == self._preset:
             self._on_log(f"[SetPreset] Preset={value}（変化なし・通知省略）")
             return
