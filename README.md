@@ -3,7 +3,7 @@
 キーボード操作で **MIDI コントローラ役（送信主体）** を演じ、Unity 側 `CkdGameController`（受信側）に対して新 MIDI 仕様の Control Change を送受信する Python アプリケーションです。実機 MIDI コントローラやゲームパッドが無くても、スティック / スライダー / ボタン / State / Mode / Error / Preset の送信、コマンド受信＋ACK、イベント送信＋応答待ちを検証できます。
 
 - 対象 MIDI 仕様: `docs/specs/midi-mapping.md`（Unity 受信側の視点で記述）
-- 設計書: `docs/superpowers/specs/2026-06-12-cc-remap-slider-and-12-buttons-design.md`
+- 設計書: `docs/superpowers/specs/2026-06-12-cc-remap-slider-and-12-buttons-design.md`（ACK 応答デバッグ注入: `docs/superpowers/specs/2026-06-13-ack-response-debug-injection-design.md`）
 
 > **送受信の向き:** 仕様書は Unity（受信側）の視点で「IN / OUT」を定義しています。本アプリはコントローラ役なので**送受信が反転**します（仕様の「IN」= 本アプリの送信、「OUT」= 本アプリの受信）。
 
@@ -51,6 +51,7 @@
   - 対応 opcode: Ping(0) / Reset(1) / SetMode(2) / SetZero(3) / SetPreset(4) / SetValve(5)
   - SetPreset は変化時のみ内部 Preset を更新し CC#117 で新値を通知。SetMode は変化時 CC#115 を通知（一方向遷移）
 - **イベント送信**（本アプリ → Unity）: 確定イベントは **Ping(0) のみ**。`EVT_OP`=CC#119 を送信し（ARG 未使用のため `EVT_ARG`=CC#118 は省略）、`EVTRSP_STATUS`=CC#89 で応答を受信。
+- **ACK 注入（デバッグ）**: コマンド ACK（CC#90）に遅延（10/35 Tick）・無応答・強制エラー status（UNKNOWN_OP/INVALID_ARG/REJECTED/予約63）を注入できる（`T`/`E` キー巡回）。Unity 側のタイムアウト→再送・遅延応答破棄・NG/未知 status 処理の試験用。遅延は「検証 → ACK → 実行」を一体で遅らせ、無応答・強制エラーでは実行もしない（応答と内部状態の整合を保つ）。設定は Reset でも解除されない。
 
 ## インストールと実行
 
@@ -106,10 +107,12 @@ pytest
 | `V`/`C` | State +1/−1（CC114・変化時のみ送信） |
 | `B` | Mode 巡回切替 0→110→127→0（CC115・デバッグ用） |
 | `G` | イベント送信 Ping（確定イベントは Ping のみ） |
+| `T` | ACK 応答タイミング巡回 即時→10→35 Tick→無応答（コマンド ACK のデバッグ注入） |
+| `E` | ACK 強制 status 巡回 通常→UNKNOWN_OP(1)→INVALID_ARG(2)→REJECTED(3)→予約(63)（同上） |
 | `M` | 自動デバッグ入力モード ON/OFF（全要素を巡回送信。Mode は有効 3 値のみ） |
 | `/` | ヘルプ再表示 ／ `ESC` 終了 |
 
-> コマンド（Ping/Reset/SetMode/SetZero/SetPreset/SetValve）は Unity から受信し自動で ACK します（キー操作不要）。
+> コマンド（Ping/Reset/SetMode/SetZero/SetPreset/SetValve）は Unity から受信し自動で ACK します（キー操作不要）。`T`/`E` で ACK の遅延・無応答・強制エラー status を注入できます（Unity 側のタイムアウト／エラー処理の試験用・自動デバッグ入力モード中も有効）。
 
 ## 必要な環境
 
@@ -138,6 +141,7 @@ pytest
 - `TICK_INTERVAL`: メインループ周期（既定 1/60 秒）
 - `STICK_STEP_PER_TICK`: 押下中ランプの 1 Tick あたり 14bit 変化量（既定 550）
 - `RESPONSE_TIMEOUT_TICKS`: イベント応答タイムアウト（既定 30 Tick ≈ 0.5s）
+- `ACK_DELAY_PRESETS` / `ACK_FORCED_STATUS_PRESETS`: ACK 注入の巡回プリセット（既定 `(0, 10, 35, 無応答)` Tick / `(通常, 1, 2, 3, 63)`）
 - `MIDI_CHANNEL`: 送受信チャンネル（既定 0 = ch1）
 - CC 番号: `cc_map.py` の定数
 

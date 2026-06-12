@@ -49,6 +49,12 @@ STATUS_OK = 0
 STATUS_UNKNOWN_OP = 1
 STATUS_INVALID_ARG = 2
 STATUS_REJECTED = 3
+STATUS_NAMES: dict[int, str] = {
+    STATUS_OK: "OK",
+    STATUS_UNKNOWN_OP: "UNKNOWN_OP",
+    STATUS_INVALID_ARG: "INVALID_ARG",
+    STATUS_REJECTED: "REJECTED",
+}
 
 # --- opcode（コマンド/イベント共通番号空間・bit0–5） -----------------------
 # 各 opcode に方向（G→C / C→G / G⇄C）が定義され、方向で経路（コマンド/イベント）が決まる。

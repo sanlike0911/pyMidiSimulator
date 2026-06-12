@@ -7,7 +7,7 @@
 キーボード操作で **MIDI コントローラ役（送信主体）** を演じ、Unity 側 `CkdGameController`（受信側）に対して新 MIDI 仕様の Control Change を送受信する Python シミュレータです。実機 MIDI コントローラやゲームパッドが無くても、スティック / スライダー / ボタン / State / Mode / Error / Preset の送信、コマンド受信＋ACK、イベント送信＋応答待ちを検証できます。
 
 - 対象 MIDI 仕様: `docs/specs/midi-mapping.md`（ゲーム＝Unity 側の視点で IN/OUT を記述）
-- 設計書: `docs/superpowers/specs/2026-06-12-cc-remap-slider-and-12-buttons-design.md`（CC 再配置・Slider 専用帯・ボタン 12 個。基盤は `2026-06-10-cc-band-and-opcode-redesign-design.md` / `2026-06-09-controller-sim-new-midi-spec-design.md`）
+- 設計書: `docs/superpowers/specs/2026-06-12-cc-remap-slider-and-12-buttons-design.md`（CC 再配置・Slider 専用帯・ボタン 12 個。基盤は `2026-06-10-cc-band-and-opcode-redesign-design.md` / `2026-06-09-controller-sim-new-midi-spec-design.md`）。ACK 応答デバッグ注入は `docs/superpowers/specs/2026-06-13-ack-response-debug-injection-design.md`
 
 > **仕様書の同期運用:** `docs/specs/midi-mapping.md` は**別プロジェクト（Unity / コントローラ側）で更新され、本リポジトリへそのままコピーされる外部正典**。本ファイルには pyMidiSimulator 固有の注記を書き込まない（上書きで消えるため）。仕様書を更新したら `pytest` を実行すること — `tests/test_spec_sync.py` が仕様書の CC 早見表・コード値（STATUS / opcode）・規約値（しきい値 / seq ビット / タイムアウト）をパースして実装定数（`cc_map` / `messaging`）と照合し、実装の追従漏れを検出する。
 
@@ -21,7 +21,7 @@
 - **`cc_map.py`** - CC 番号定数・opcode/Mode/Valve 定数・正規化（`norm14_bipolar` / `norm14_unipolar`）・14bit 分割/再構成（`split_14bit` / `combine_14bit`）・seq コーデック（`pack_seq` / `payload_of` / `seq_of`）。MIDI/pygame 非依存の純粋関数。
 - **`controller_state.py`** - アプリ層。パラメータ現在値（State/Mode/Error/Preset/Valve）の一元管理・接続直後の初期通知・変化時のみ送信・コマンドの opcode 別 validate/execute。`send_cc` / `on_reset` / `on_log` の注入で動作する純粋ロジック。
 - **`auto_sequencer.py`** - 自動デバッグ入力モードの巡回シーケンス生成（`AutoSequencer` / `SendAction` / `ActionKind` / `Phase`）。`tick(event_pending)` がアクション列を返す MIDI/pygame 非依存の純粋ロジック。
-- **`messaging.py`** - コマンド/イベント I/F のプロトコル層（フレーミング・ACK・seqEcho・イベント保留・タイムアウト）。opcode の中身は知らず、注入された `validate_command` / `execute_command`（controller_state）へ「検証 → ACK → 実行」の順で委譲する。
+- **`messaging.py`** - コマンド/イベント I/F のプロトコル層（フレーミング・ACK・seqEcho・イベント保留・タイムアウト）。opcode の中身は知らず、注入された `validate_command` / `execute_command`（controller_state）へ「検証 → ACK → 実行」の順で委譲する。コマンド ACK のデバッグ注入（遅延・無応答・強制エラー status）もプロトコル層として本モジュールが担う（`set_ack_delay` / `set_ack_forced_status`）。
 - **`midi_io.py`** - python-rtmidi のラッパー（ポート列挙・7bit/14bit CC 送信・受信ディスパッチ）。
 - **`keyboard_map.py`** - pygame キー → セマンティックアクションのマッピングとヘルプテキスト。
 - **`tests/`** - pytest（`cc_map` / `messaging` / `controller_state` / `auto_sequencer` の純粋ロジックを網羅）。`test_spec_sync.py` は仕様書 `docs/specs/midi-mapping.md` と実装定数の同期を検証する。
@@ -58,10 +58,11 @@
 - opcode（共通番号空間・全 6 種）: Ping(0)=OK ／ Reset(1)=全状態初期化＋再初期通知 ／ SetMode(2)=ARG1∈{0,110,127} を検証し変化時 CC#115 通知（**一方向遷移**: 非通常モードからは REJECTED）／ SetZero(3)=受領のみ ／ SetPreset(4)=変化時のみ Preset 更新＋CC#117 通知（ARG2 未使用）／ SetValve(5)=ARG1∈{0=open,1=close} を検証。未知 opcode=UNKNOWN_OP。未使用 ARG は検証しない。
 - イベント送信: 確定イベントは **Ping(0) のみ**（方向 G⇄C。ARG 未使用のため `EVT_ARG` を省略し `EVT_OP` のみ送信）→ `EVTRSP_STATUS` 受信で解決、seq 不一致/保留なしは破棄、30 Tick でタイムアウト・再送可。
 - 受信は常時処理（応答待ち中もコマンド受信→即 ACK）。クロスしてもデッドロックしない。
+- **ACK 注入（デバッグ）**: コマンド ACK（CC#90）に遅延・無応答・強制エラー status を注入できる（`T`/`E` キー巡回。対向＝Unity 側のタイムアウト→再送・遅延応答破棄・NG/未知 status 処理の試験用）。遅延は「検証 → ACK → 実行」を一体で N Tick 遅らせ（検証は発火時の状態に対して行う・複数保留は FIFO で追い越しなし）、無応答と強制エラーでは**実行もしない**（ワイヤ上の応答と内部状態の整合を保つ。強制 OK は禁止）。ARG は通常どおり commit 時点で束縛・消費。設定は操作者所有で **Reset でも解除されない**。
 
 ### 自動デバッグ入力モード
 
-`M` キーで ON/OFF する。手動操作なしに送信系の CC を巡回送信し、受信側（Unity）の動作確認に使う。1 サイクルは「スティック各軸スイープ → スライダー 1–4 スイープ（単極 0→16383→0）→ ボタン 0–11 順次 ON/OFF → State/Mode/Error/Preset 巡回（CC 昇順）→ Ping イベント送信」で、終了後ループする。**Mode（CC#115）はスイープせず有効 3 値（110→127→0）のみを送信**し、最後に必ず通常(0)へ復帰する（無効値の大量送信と、非通常モードのまま終わる誤認を防ぐ。全送信をモード名付きでログ）。生成ロジックは `auto_sequencer.py` の `AutoSequencer`（純粋関数・テスト済み）。自動モード中は手動入力を無視し、`M`・`/`・`ESC` のみ有効。MIDI 入力が無い場合、イベントは応答タイムアウト（30 Tick）で次へ進む。
+`M` キーで ON/OFF する。手動操作なしに送信系の CC を巡回送信し、受信側（Unity）の動作確認に使う。1 サイクルは「スティック各軸スイープ → スライダー 1–4 スイープ（単極 0→16383→0）→ ボタン 0–11 順次 ON/OFF → State/Mode/Error/Preset 巡回（CC 昇順）→ Ping イベント送信」で、終了後ループする。**Mode（CC#115）はスイープせず有効 3 値（110→127→0）のみを送信**し、最後に必ず通常(0)へ復帰する（無効値の大量送信と、非通常モードのまま終わる誤認を防ぐ。全送信をモード名付きでログ）。生成ロジックは `auto_sequencer.py` の `AutoSequencer`（純粋関数・テスト済み）。自動モード中は手動入力を無視し、`M`・`/`・`ESC`・`T`/`E`（ACK 注入。受信・ACK は自動モード中も動くため）のみ有効。MIDI 入力が無い場合、イベントは応答タイムアウト（30 Tick）で次へ進む。
 
 ## 開発環境
 
@@ -136,10 +137,12 @@ pytest
 | `V`/`C` | State +1/−1（CC114・変化時のみ送信） |
 | `B` | Mode 巡回切替 0→110→127→0（CC115・デバッグ用） |
 | `G` | イベント送信 Ping（確定イベントは Ping のみ） |
+| `T` | ACK 応答タイミング巡回 即時→10→35 Tick→無応答（コマンド ACK のデバッグ注入） |
+| `E` | ACK 強制 status 巡回 通常→UNKNOWN_OP(1)→INVALID_ARG(2)→REJECTED(3)→予約(63)（同上） |
 | `M` | 自動デバッグ入力モード ON/OFF（全要素を巡回送信） |
 | `/` | ヘルプ再表示 ／ `ESC` 終了 |
 
-> コマンド（Ping/Reset/SetMode/SetZero/SetPreset/SetValve）は Unity から受信し自動で ACK する（キー操作不要）。Mode（CC115）は SetMode コマンド起点・初期通知に加え、`B` キーの手動巡回でも送信できる（コントローラ自身のモード遷移の模擬。非通常モードへ巡回中は SetMode が一方向遷移の制約で REJECTED になる）。
+> コマンド（Ping/Reset/SetMode/SetZero/SetPreset/SetValve）は Unity から受信し自動で ACK する（キー操作不要）。`T`/`E` で ACK の遅延・無応答・強制エラー status を注入できる（自動デバッグ入力モード中も有効）。Mode（CC115）は SetMode コマンド起点・初期通知に加え、`B` キーの手動巡回でも送信できる（コントローラ自身のモード遷移の模擬。非通常モードへ巡回中は SetMode が一方向遷移の制約で REJECTED になる）。
 
 ## 依存関係
 
@@ -157,6 +160,7 @@ pytest
 - **14bit 範囲**: 0–16383（中央 8192）
 - **`AXIS_CENTER`**: 軸の中心点（既定 8192 = `cc_map.CENTER_14BIT`）
 - **`AUTO_STICK_STEP` / `AUTO_BUTTON_HOLD_TICKS` / `AUTO_CC_STEP`**: 自動デバッグ入力モードのスイープ速度・ボタン保持・スカラー刻み（既定 550 / 15 / 8）
+- **`ACK_DELAY_PRESETS` / `ACK_FORCED_STATUS_PRESETS`**: ACK 注入の巡回プリセット（既定 `(0, 10, 35, 無応答)` Tick / `(通常, UNKNOWN_OP, INVALID_ARG, REJECTED, 予約63)`）
 
 ## UI 機能
 
